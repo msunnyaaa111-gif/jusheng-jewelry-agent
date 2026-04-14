@@ -1,0 +1,9 @@
+{
+  "mappings": [
+    {
+      "mapping_type": "gift_target",
+      "phrase": "男票",
+      "canonical_value": "男款"
+    }
+  ]
+}

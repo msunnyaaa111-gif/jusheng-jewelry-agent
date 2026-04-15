@@ -39,18 +39,14 @@ class LongCatClient:
             "Authorization": f"Bearer {self.settings.longcat_api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": model or self.settings.longcat_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload, ensure_ascii=False),
-                },
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        payload = self._build_request_payload(
+            system_prompt=system_prompt,
+            user_payload=user_payload,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+            stream=False,
+        )
 
         client = await self._get_client()
         try:
@@ -91,19 +87,14 @@ class LongCatClient:
             "Authorization": f"Bearer {self.settings.longcat_api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": model or self.settings.longcat_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(user_payload, ensure_ascii=False),
-                },
-            ],
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
+        payload = self._build_request_payload(
+            system_prompt=system_prompt,
+            user_payload=user_payload,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            model=model,
+            stream=True,
+        )
 
         client = await self._get_client()
         try:
@@ -164,3 +155,63 @@ class LongCatClient:
             if not match:
                 raise
             return json.loads(match.group(0))
+
+    def _build_request_payload(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: dict[str, Any],
+        temperature: float,
+        max_tokens: int,
+        model: str | None,
+        stream: bool,
+    ) -> dict[str, Any]:
+        resolved_model = model or self.settings.longcat_model
+        user_text = json.dumps(user_payload, ensure_ascii=False)
+
+        if self._uses_omni_format(resolved_model):
+            return {
+                "model": resolved_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": system_prompt,
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": user_text,
+                            }
+                        ],
+                    },
+                ],
+                "temperature": max(temperature, 0.01),
+                "max_tokens": max_tokens,
+                "stream": stream,
+                "output_modalities": ["text"],
+            }
+
+        return {
+            "model": resolved_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_text,
+                },
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+
+    @staticmethod
+    def _uses_omni_format(model_name: str) -> bool:
+        return "omni" in model_name.lower()

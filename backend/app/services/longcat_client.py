@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class LongCatClient:
@@ -49,13 +53,25 @@ class LongCatClient:
         }
 
         client = await self._get_client()
-        response = await client.post(
-            self.settings.longcat_api_url,
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = await client.post(
+                self.settings.longcat_api_url,
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            body_preview = (exc.response.text or "")[:500] if exc.response is not None else ""
+            logger.warning(
+                "LongCat chat_completion failed with status=%s body=%s",
+                exc.response.status_code if exc.response is not None else "unknown",
+                body_preview,
+            )
+            raise
+        except Exception:
+            logger.exception("LongCat chat_completion request failed")
+            raise
 
         return data["choices"][0]["message"]["content"]
 
@@ -90,29 +106,41 @@ class LongCatClient:
         }
 
         client = await self._get_client()
-        async with client.stream(
-            "POST",
-            self.settings.longcat_api_url,
-            headers=headers,
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line:
-                    continue
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                chunk = json.loads(data)
-                choices = chunk.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                content = delta.get("content")
-                if content:
-                    yield content
+        try:
+            async with client.stream(
+                "POST",
+                self.settings.longcat_api_url,
+                headers=headers,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield content
+        except httpx.HTTPStatusError as exc:
+            body_preview = (exc.response.text or "")[:500] if exc.response is not None else ""
+            logger.warning(
+                "LongCat stream_chat_completion failed with status=%s body=%s",
+                exc.response.status_code if exc.response is not None else "unknown",
+                body_preview,
+            )
+            raise
+        except Exception:
+            logger.exception("LongCat stream_chat_completion request failed")
+            raise
 
     @staticmethod
     def extract_json_block(raw_text: str) -> dict[str, Any]:

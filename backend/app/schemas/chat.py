@@ -33,6 +33,7 @@ class ChatResponse(BaseModel):
     session_id: str = Field(description="Session ID")
     action: str = Field(description="Turn action, such as GREETING / ASK_FOLLOWUP / RETRIEVE_AND_RECOMMEND")
     reply_text: str = Field(description="Final reply text")
+    reply_source: str | None = Field(default=None, description="Reply source, such as llm / fallback / cards")
     purchase_advice: str | None = Field(default=None, description="Final purchase advice for product-card style rendering")
     followup_question: str | None = Field(default=None, description="Follow-up question if needed")
     recommended_products: list[RecommendedProduct] = Field(default_factory=list, description="Recommended product list")

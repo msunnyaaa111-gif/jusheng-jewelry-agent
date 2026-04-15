@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 
@@ -11,6 +12,9 @@ from app.schemas.chat import RecommendedProduct
 from app.services.condition_parser import ConditionParser
 from app.services.longcat_client import LongCatClient
 from app.services.recommendation_service import RecommendationService
+
+
+logger = logging.getLogger(__name__)
 
 
 REPLY_SYSTEM_PROMPT = """
@@ -188,6 +192,7 @@ class DialogueService:
     async def handle_message(self, *, session_id: str, text: str, response_mode: str = "text") -> dict[str, Any]:
         turn = await self._prepare_turn(session_id=session_id, text=text)
         products = turn["recommended_products"]
+        reply_source = "cards" if response_mode == "cards" else None
         if turn["action"] in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"} and products:
             products = await self._enrich_recommendation_copy(
                 state=turn["state"],
@@ -197,7 +202,7 @@ class DialogueService:
         if response_mode == "cards" and turn["action"] in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"} and products:
             reply_text = ""
         else:
-            reply_text = await self._generate_reply(
+            reply_text, reply_source = await self._generate_reply(
                 action=turn["action"],
                 text=text,
                 state=turn["state"],
@@ -208,6 +213,7 @@ class DialogueService:
             session_id=session_id,
             action=turn["action"],
             reply_text=reply_text,
+            reply_source=reply_source,
             followup_question=turn["followup_question"],
             recommended_products=products,
             state=turn["state"],
@@ -241,6 +247,7 @@ class DialogueService:
                     session_id=session_id,
                     action=action,
                     reply_text="",
+                    reply_source="cards",
                     followup_question=followup_question,
                     recommended_products=products,
                     state=state,
@@ -249,6 +256,7 @@ class DialogueService:
                 return
 
         reply_text = ""
+        reply_source = "llm"
         if self.longcat_client.settings.llm_enabled:
             payload = self._build_reply_payload(
                 action=action,
@@ -271,10 +279,11 @@ class DialogueService:
                     if action not in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"}:
                         yield {"type": "delta", "text": chunk}
             except Exception:
+                logger.exception("Streaming reply generation failed; falling back", extra={"action": action})
                 reply_text = ""
 
         if not reply_text.strip():
-            reply_text = await self._generate_reply(
+            reply_text, reply_source = await self._generate_reply(
                 action=action,
                 text=text,
                 state=state,
@@ -300,6 +309,7 @@ class DialogueService:
             session_id=session_id,
             action=action,
             reply_text=reply_text,
+            reply_source=reply_source,
             followup_question=followup_question,
             recommended_products=products,
             state=state,
@@ -597,6 +607,7 @@ class DialogueService:
             )
             result = self.longcat_client.extract_json_block(raw)
         except Exception:
+            logger.exception("Recommendation copy enrichment failed; using fallback copy")
             return fallback_products
 
         product_copy_map: dict[str, dict[str, str]] = {}
@@ -641,6 +652,7 @@ class DialogueService:
         session_id: str,
         action: str,
         reply_text: str,
+        reply_source: str | None,
         followup_question: str | None,
         recommended_products: list[dict[str, Any]],
         state: SessionState,
@@ -655,6 +667,7 @@ class DialogueService:
         return {
             "action": action,
             "reply_text": reply_text,
+            "reply_source": reply_source,
             "purchase_advice": purchase_advice,
             "followup_question": followup_question if action == "ASK_FOLLOWUP" else None,
             "recommended_products": [self._to_api_product(product, state) for product in recommended_products],
@@ -832,7 +845,7 @@ class DialogueService:
         state: SessionState,
         parsed: dict[str, Any],
         products: list[dict[str, Any]],
-    ) -> str:
+    ) -> tuple[str, str]:
         if self.longcat_client.settings.llm_enabled:
             max_tokens = 1000 if action in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"} else 260
             payload = self._build_reply_payload(
@@ -863,11 +876,60 @@ class DialogueService:
                     else:
                         reply_text = self._sanitize_reply_text(action, reply_text)
                     closing = self._sanitize_reply_text(action, closing) if closing else closing
-                    return f"{reply_text}\n\n{closing}".strip() if closing else reply_text
+                    final_reply = f"{reply_text}\n\n{closing}".strip() if closing else reply_text
+                    return final_reply, "llm"
             except Exception:
-                pass
+                logger.exception("Reply generation failed; using fallback", extra={"action": action})
 
-        return self._fallback_reply(action=action, state=state, parsed=parsed, products=products)
+        return self._build_rich_fallback_reply(action=action, state=state, parsed=parsed, products=products), "fallback"
+
+    def _build_rich_fallback_reply(
+        self,
+        *,
+        action: str,
+        state: SessionState,
+        parsed: dict[str, Any],
+        products: list[dict[str, Any]],
+    ) -> str:
+        if action == "GREETING":
+            return (
+                "您好！欢迎来到钜盛珠宝，我是您的专属导购顾问，很高兴为您服务。\n\n"
+                "我可以根据预算、送礼对象、款式偏好和佩戴场景，帮您更快筛到合适的珠宝。\n\n"
+                "您这次更偏向自己佩戴，还是送人呢？如果方便的话，也可以直接告诉我大概预算。"
+            )
+
+        if action == "ASK_FOLLOWUP":
+            question = parsed.get("followup_question") or "您方便再告诉我一下预算，或者更想看的款式方向吗？"
+            context_parts: list[str] = []
+            if state.budget is not None:
+                context_parts.append(f"预算大概在 {self._format_price(state.budget)} 左右")
+            if state.gift_target == "自戴":
+                context_parts.append("这次更偏向自己日常佩戴")
+            elif state.gift_target:
+                context_parts.append(f"这次主要是给{state.gift_target}挑选")
+            if state.category:
+                context_parts.append(f"我会优先围绕{state.category[0]}来帮您筛选")
+
+            if context_parts:
+                return (
+                    f"您好，我先记下来了：{'，'.join(context_parts)}。\n\n"
+                    f"这样我会更容易帮您缩小范围。{question}"
+                )
+            return (
+                "您好！欢迎来到钜盛珠宝，我这边已经收到您的需求了。\n\n"
+                f"为了更快帮您筛到更合适的款式，{question}"
+            )
+
+        if action == "EXPLAIN_NO_RESULT":
+            return (
+                "我刚刚按您现在的条件帮您筛了一轮，当前完全匹配的款式还比较少。\n\n"
+                "如果您愿意，我可以帮您稍微放宽一点预算范围，或者换成相近的材质、风格或品类，再继续给您补一轮更贴近的推荐。"
+            )
+
+        if products:
+            return self._render_detailed_recommendation(state=state, products=products)
+
+        return "您好，我已经收到您的需求了。您可以继续告诉我预算、款式偏好或送礼对象，我再帮您更精准地筛选。"
 
     def _build_reply_payload(
         self,

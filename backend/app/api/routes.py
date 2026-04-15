@@ -186,6 +186,67 @@ def mapping_examples(
     )
 
 
+@router.get(
+    "/api/admin/diagnostics/llm",
+    tags=["Admin"],
+    summary="检查当前 LLM 连接状态",
+)
+async def llm_diagnostics(
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "llm_enabled": settings.llm_enabled,
+        "model": settings.longcat_model,
+        "api_url": settings.longcat_api_url,
+        "chat_ok": False,
+        "chat_reply_preview": "",
+        "chat_error": None,
+        "stream_ok": False,
+        "stream_reply_preview": "",
+        "stream_error": None,
+    }
+
+    if not settings.llm_enabled:
+        result["chat_error"] = "LONGCAT_API_KEY 未配置"
+        result["stream_error"] = "LONGCAT_API_KEY 未配置"
+        return result
+
+    client = LongCatClient(settings)
+    payload = {"probe": "ping", "message": "请只回复 pong"}
+
+    try:
+        chat_reply = await client.chat_completion(
+            system_prompt="You are a connectivity checker. Reply with pong only.",
+            user_payload=payload,
+            temperature=0,
+            max_tokens=20,
+        )
+        result["chat_ok"] = True
+        result["chat_reply_preview"] = chat_reply[:120]
+    except Exception as exc:
+        result["chat_error"] = str(exc)[:300]
+
+    try:
+        chunks: list[str] = []
+        async for chunk in client.stream_chat_completion(
+            system_prompt="You are a connectivity checker. Reply with pong only.",
+            user_payload=payload,
+            temperature=0,
+            max_tokens=20,
+        ):
+            chunks.append(chunk)
+            if len("".join(chunks)) >= 20:
+                break
+        result["stream_ok"] = bool("".join(chunks).strip())
+        result["stream_reply_preview"] = "".join(chunks)[:120]
+        if not result["stream_ok"]:
+            result["stream_error"] = "流式调用未返回有效内容"
+    except Exception as exc:
+        result["stream_error"] = str(exc)[:300]
+
+    return result
+
+
 def _format_sse(event: str, data: dict) -> str:
     payload = json.dumps(jsonable_encoder(data), ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"

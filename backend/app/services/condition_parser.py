@@ -303,9 +303,9 @@ class ConditionParser:
             return None
 
         if field == "gift_target":
-            for canonical, keywords in self._gift_target_keywords().items():
-                if text == canonical or any(keyword in text for keyword in keywords):
-                    return canonical
+            matched_target = self._match_gift_target(text, field_only=True)
+            if matched_target:
+                return matched_target
             return text
 
         if field in {"category", "excluded_categories"}:
@@ -550,12 +550,64 @@ class ConditionParser:
 
     def _extract_gift_target(self, text: str) -> str | None:
         explicit_age = self._extract_age(text)
-        for label, keywords in self._gift_target_keywords().items():
-            if any(keyword in text for keyword in keywords):
-                return label
+        matched_target = self._match_gift_target(text)
+        if matched_target:
+            return matched_target
         if explicit_age is not None and explicit_age >= 50 and self._mentions_female_age_context(text):
             return "自戴"
         return None
+
+    def _match_gift_target(self, text: str, *, field_only: bool = False) -> str | None:
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return None
+
+        if self._is_self_wear_expression(normalized, field_only=field_only):
+            return "自戴"
+
+        for label, keywords in self._gift_target_keywords().items():
+            if any(keyword in normalized for keyword in keywords):
+                return label
+
+        return None
+
+    def _is_self_wear_expression(self, text: str, *, field_only: bool = False) -> bool:
+        direct_terms = (
+            "自戴",
+            "自用",
+            "给自己",
+            "给我自己",
+            "送给自己",
+            "送给我自己",
+            "买给自己",
+            "买给我自己",
+            "留给自己",
+            "留给我自己",
+            "自己佩戴",
+            "自己戴",
+            "自己带",
+            "自己用",
+            "自己留着",
+            "我自己戴",
+            "我自己带",
+            "我自己用",
+            "我自己留着",
+            "我日常戴",
+            "日常自己戴",
+        )
+        if any(term in text for term in direct_terms):
+            return True
+
+        if field_only and text in {"自己", "我自己", "本人"}:
+            return True
+
+        contextual_patterns = (
+            r"(?:送|买|挑|选|留|拿|配)?给我自己(?:用|戴|带|留着|佩戴)?",
+            r"(?:送|买|挑|选|留|拿|配)?给自己(?:用|戴|带|留着|佩戴)?",
+            r"我自己(?:用|戴|带|留着|佩戴)",
+            r"自己(?:用|戴|带|留着|佩戴)",
+        )
+        return any(re.search(pattern, text) for pattern in contextual_patterns)
 
     def _extract_luxury_intent(self, text: str) -> list[str]:
         result = []

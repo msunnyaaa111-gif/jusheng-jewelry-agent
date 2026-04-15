@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>金榕珠宝智能体 静态演示</title>
+    <link rel="stylesheet" href="../src/styles/global.css" />
+    <style>
+      .static-page {
+        position: relative;
+        height: 100vh;
+        min-height: 100vh;
+        overflow: hidden;
+      }
+
+      .static-placeholder {
+        display: grid;
+        place-items: center;
+        color: rgba(244, 234, 219, 0.62);
+        font-size: 14px;
+        letter-spacing: 0.04em;
+      }
+
+      .static-note {
+        margin-top: 12px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px dashed rgba(232, 211, 180, 0.16);
+        color: rgba(244, 234, 219, 0.72);
+        font-size: 13px;
+      }
+
+      .static-composer {
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="static-page">
+      <div class="background-orb orb-left"></div>
+      <div class="background-orb orb-right"></div>
+
+      <main class="chat-layout">
+        <section class="hero-panel">
+          <span class="eyebrow">JUSHENG JEWELRY AI</span>
+          <h1>金榕珠宝智能导购</h1>
+          <p>
+            这是一个不依赖后端的静态演示页，用来快速预览当前聊天界面的视觉效果、卡片布局和移动端适配状态。
+          </p>
+
+          <div class="status-card">
+            <span class="status-dot offline"></span>
+            <div>
+              <strong>静态演示模式</strong>
+              <p>当前页面不连接 API，只用于展示前端样式和内容结构。</p>
+            </div>
+          </div>
+
+          <div class="starter-list">
+            <button type="button" class="starter-chip">预算 3000 左右，送女朋友</button>
+            <button type="button" class="starter-chip">想看 500 左右的水晶手串</button>
+            <button type="button" class="starter-chip">送妈妈的日常佩戴手链</button>
+          </div>
+
+          <div class="static-note">
+            这个页面是给你做“静态测试网站”的。
+            真正联调时，还是继续使用你原来的 React 前端和 FastAPI 后端。
+          </div>
+        </section>
+
+        <section class="chat-panel">
+          <header class="chat-header">
+            <div>
+              <span class="chat-title">静态对话演示</span>
+              <p>用于查看聊天气泡、推荐卡片、底部输入区的排版效果</p>
+            </div>
+          </header>
+
+          <div class="message-list">
+            <article class="message-card user">
+              <div class="message-role">您</div>
+              <div class="message-text">预算 3000 左右，送女朋友，想看项链，轻奢一点。</div>
+            </article>
+
+            <article class="message-card assistant">
+              <div class="message-role">金榕顾问</div>
+              <div class="message-status">正在整理推荐结果...</div>
+              <div class="message-text">
+                已根据预算、送礼对象和佩戴场景筛出更适合轻奢送礼的款式，下面是静态卡片演示。
+              </div>
+
+              <div class="product-grid">
+                <section class="product-card">
+                  <div class="product-image-wrap static-placeholder">产品图片预留区</div>
+                  <div class="product-header">
+                    <h3>轻奢玫瑰金项链</h3>
+                    <span>ID_0001</span>
+                  </div>
+                  <dl class="product-meta">
+                    <div>
+                      <dt>类别</dt>
+                      <dd>项链</dd>
+                    </div>
+                    <div>
+                      <dt>材质</dt>
+                      <dd>18K 金 / 锆石</dd>
+                    </div>
+                    <div>
+                      <dt>价格</dt>
+                      <dd>¥2,980</dd>
+                    </div>
+                    <div>
+                      <dt>批发拿货价</dt>
+                      <dd>¥2,360</dd>
+                    </div>
+                    <div>
+                      <dt>风格</dt>
+                      <dd>轻奢、通勤、约会</dd>
+                    </div>
+                  </dl>
+                  <div class="product-copy">
+                    <div>
+                      <strong>推荐理由</strong>
+                      <p>预算贴合度高，视觉精致，适合年轻送礼场景。</p>
+                    </div>
+                    <div>
+                      <strong>搭配建议</strong>
+                      <p>适合搭配浅色针织或简约衬衫，整体更显气质。</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="product-card">
+                  <div class="product-image-wrap static-placeholder">产品图片预留区</div>
+                  <div class="product-header">
+                    <h3>珍珠流光锁骨链</h3>
+                    <span>ID_0002</span>
+                  </div>
+                  <dl class="product-meta">
+                    <div>
+                      <dt>类别</dt>
+                      <dd>锁骨链</dd>
+                    </div>
+                    <div>
+                      <dt>材质</dt>
+                      <dd>淡水珍珠 / 合金镀金</dd>
+                    </div>
+                    <div>
+                      <dt>价格</dt>
+                      <dd>¥1,680</dd>
+                    </div>
+                    <div>
+                      <dt>批发拿货价</dt>
+                      <dd>¥1,220</dd>
+                    </div>
+                    <div>
+                      <dt>风格</dt>
+                      <dd>温柔、礼物感强</dd>
+                    </div>
+                  </dl>
+                  <div class="product-copy">
+                    <div>
+                      <strong>推荐理由</strong>
+                      <p>送礼接受度高，佩戴门槛低，适合日常和约会场景。</p>
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="purchase-advice-card">
+                <strong>购买建议</strong>
+                <p>如果你后续要做线下演示，建议优先展示这类卡片型结果，因为成交导向会更清晰。</p>
+              </div>
+            </article>
+          </div>
+
+          <form class="composer" onsubmit="return false;">
+            <textarea
+              class="static-composer"
+              rows="3"
+              placeholder="静态演示页不发送请求，这里只用于展示输入框样式。"
+            ></textarea>
+            <div class="composer-bar">
+              <span>这里保留了你原页面的输入区域视觉风格</span>
+              <button type="button" disabled>静态预览</button>
+            </div>
+          </form>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

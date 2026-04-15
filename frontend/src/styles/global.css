@@ -11,6 +11,9 @@
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
   font-weight: 400;
+  --scrollbar-track: rgba(20, 15, 12, 0.94);
+  --scrollbar-thumb: linear-gradient(180deg, rgba(72, 54, 43, 0.96), rgba(47, 35, 28, 0.98));
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(94, 71, 56, 0.98), rgba(58, 43, 34, 0.98));
 }
 
 * {
@@ -21,7 +24,9 @@ html,
 body,
 #root {
   margin: 0;
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -35,6 +40,7 @@ textarea {
 
 .app-shell {
   position: relative;
+  height: 100vh;
   min-height: 100vh;
   overflow: hidden;
 }
@@ -69,10 +75,12 @@ textarea {
   z-index: 1;
   width: min(1380px, calc(100% - 32px));
   margin: 0 auto;
+  height: 100vh;
   padding: 28px 0 32px;
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
   gap: 20px;
+  overflow: hidden;
 }
 
 .hero-panel,
@@ -81,14 +89,19 @@ textarea {
   border: 1px solid rgba(235, 213, 176, 0.12);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(22px);
+  min-height: 0;
 }
 
 .hero-panel {
+  height: 100%;
   padding: 28px;
   border-radius: 30px;
   display: flex;
   flex-direction: column;
   gap: 22px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(72, 54, 43, 0.96) rgba(20, 15, 12, 0.94);
 }
 
 .eyebrow {
@@ -175,7 +188,7 @@ textarea {
 }
 
 .chat-panel {
-  min-height: calc(100vh - 60px);
+  height: 100%;
   border-radius: 34px;
   display: grid;
   grid-template-rows: auto 1fr auto;
@@ -206,11 +219,37 @@ textarea {
 }
 
 .message-list {
+  min-height: 0;
   padding: 20px 22px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(72, 54, 43, 0.96) rgba(20, 15, 12, 0.94);
+}
+
+.hero-panel::-webkit-scrollbar,
+.message-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.hero-panel::-webkit-scrollbar-track,
+.message-list::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+.hero-panel::-webkit-scrollbar-thumb,
+.message-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid rgba(24, 18, 15, 0.82);
+}
+
+.hero-panel::-webkit-scrollbar-thumb:hover,
+.message-list::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
 }
 
 .message-card {
@@ -459,6 +498,7 @@ textarea {
 @media (max-width: 1100px) {
   .chat-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 0.34fr) minmax(0, 0.66fr);
   }
 
   .hero-panel {
@@ -466,7 +506,6 @@ textarea {
   }
 
   .chat-panel {
-    min-height: 70vh;
     border-radius: 28px;
   }
 }
@@ -474,6 +513,7 @@ textarea {
 @media (max-width: 720px) {
   .chat-layout {
     width: calc(100% - 18px);
+    height: 100dvh;
     padding: 10px 0 16px;
     gap: 12px;
   }

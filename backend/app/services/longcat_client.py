@@ -131,7 +131,15 @@ class LongCatClient:
                     if content:
                         yield content
         except httpx.HTTPStatusError as exc:
-            body_preview = (exc.response.text or "")[:500] if exc.response is not None else ""
+            body_preview = ""
+            if exc.response is not None:
+                try:
+                    body_preview = exc.response.text[:500]
+                except Exception:
+                    try:
+                        body_preview = (await exc.response.aread()).decode("utf-8", errors="replace")[:500]
+                    except Exception:
+                        body_preview = ""
             logger.warning(
                 "LongCat stream_chat_completion failed with status=%s body=%s",
                 exc.response.status_code if exc.response is not None else "unknown",

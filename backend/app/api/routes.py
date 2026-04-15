@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
@@ -26,6 +27,39 @@ router = APIRouter()
 _dialogue_service: DialogueService | None = None
 _product_repository: ProductRepository | None = None
 _mapping_repository: MappingRepository | None = None
+
+
+async def _build_http_error_detail(exc: Exception) -> dict[str, object]:
+    detail: dict[str, object] = {
+        "type": exc.__class__.__name__,
+        "message": str(exc)[:500],
+    }
+
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        body_preview = ""
+        try:
+            body_preview = exc.response.text[:1000]
+        except Exception:
+            try:
+                body_preview = (await exc.response.aread()).decode("utf-8", errors="replace")[:1000]
+            except Exception:
+                body_preview = ""
+
+        detail.update(
+            {
+                "status_code": exc.response.status_code,
+                "url": str(exc.request.url) if exc.request is not None else None,
+                "body_preview": body_preview,
+            }
+        )
+    elif isinstance(exc, httpx.RequestError):
+        detail.update(
+            {
+                "url": str(exc.request.url) if exc.request is not None else None,
+            }
+        )
+
+    return detail
 
 
 def get_product_repository(settings: Settings = Depends(get_settings)) -> ProductRepository:
@@ -193,17 +227,25 @@ def mapping_examples(
 )
 async def llm_diagnostics(
     settings: Settings = Depends(get_settings),
+    model: str | None = Query(default=None, description="Optional model override for diagnostics."),
+    temperature: float = Query(default=0.4, description="Probe temperature override."),
 ) -> dict[str, object]:
+    effective_model = model or settings.longcat_model
     result: dict[str, object] = {
         "llm_enabled": settings.llm_enabled,
         "model": settings.longcat_model,
+        "effective_model": effective_model,
+        "effective_temperature": temperature,
         "api_url": settings.longcat_api_url,
+        "probe_payload": {"probe": "ping", "message": "请只回复 pong"},
         "chat_ok": False,
         "chat_reply_preview": "",
         "chat_error": None,
+        "chat_error_detail": None,
         "stream_ok": False,
         "stream_reply_preview": "",
         "stream_error": None,
+        "stream_error_detail": None,
     }
 
     if not settings.llm_enabled:
@@ -218,21 +260,24 @@ async def llm_diagnostics(
         chat_reply = await client.chat_completion(
             system_prompt="You are a connectivity checker. Reply with pong only.",
             user_payload=payload,
-            temperature=0,
+            temperature=temperature,
             max_tokens=20,
+            model=effective_model,
         )
         result["chat_ok"] = True
         result["chat_reply_preview"] = chat_reply[:120]
     except Exception as exc:
         result["chat_error"] = str(exc)[:300]
+        result["chat_error_detail"] = await _build_http_error_detail(exc)
 
     try:
         chunks: list[str] = []
         async for chunk in client.stream_chat_completion(
             system_prompt="You are a connectivity checker. Reply with pong only.",
             user_payload=payload,
-            temperature=0,
+            temperature=temperature,
             max_tokens=20,
+            model=effective_model,
         ):
             chunks.append(chunk)
             if len("".join(chunks)) >= 20:
@@ -243,6 +288,7 @@ async def llm_diagnostics(
             result["stream_error"] = "流式调用未返回有效内容"
     except Exception as exc:
         result["stream_error"] = str(exc)[:300]
+        result["stream_error_detail"] = await _build_http_error_detail(exc)
 
     return result
 

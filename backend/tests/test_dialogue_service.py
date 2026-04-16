@@ -123,7 +123,7 @@ class DialogueServiceRerankTests(unittest.IsolatedAsyncioTestCase):
         )
         second = await service.handle_message(
             session_id="rerank-session",
-            text="有没有其他款式",
+            text="还有其他的款式吗？",
         )
 
         self.assertEqual(first["action"], "RETRIEVE_AND_RECOMMEND")

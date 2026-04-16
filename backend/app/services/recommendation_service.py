@@ -448,14 +448,13 @@ class RecommendationService:
         return any(keyword in haystack for keyword in expanded_keywords)
 
     def _matches_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
-        haystack = " ".join(
+        text_haystack = " ".join(
             [
                 product.get("product_name") or "",
                 product.get("main_material") or "",
                 product.get("stone_material") or "",
                 product.get("system_attributes") or "",
                 product.get("selling_points") or "",
-                " ".join(product.get("_inferred_colors") or []),
             ]
         )
         color_aliases = {
@@ -471,7 +470,15 @@ class RecommendationService:
         }
         for color in colors:
             variants = color_aliases.get(color, [color])
-            if any(variant in haystack for variant in variants):
+            if any(variant in text_haystack for variant in variants):
+                return True
+        inferred_colors = [str(item).strip() for item in (product.get("_inferred_colors") or []) if str(item).strip()]
+        if not inferred_colors:
+            return False
+        primary_color = inferred_colors[0]
+        for color in colors:
+            variants = color_aliases.get(color, [color])
+            if primary_color in variants or primary_color == color:
                 return True
         return False
 

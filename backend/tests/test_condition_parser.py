@@ -35,6 +35,50 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
         self.assertFalse(result["needs_followup"])
 
+    def test_detect_more_options_request_with_natural_de_particle(self) -> None:
+        state = SessionState(budget=500.0, category=["手链"], gift_target="自戴")
+
+        result = self.parser._heuristic_parse(
+            message="还有其他的款式吗？",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_detect_more_options_request_with_recommend_more_phrase(self) -> None:
+        state = SessionState(budget=500.0, category=["手链"], gift_target="自戴")
+
+        result = self.parser._heuristic_parse(
+            message="再推荐几款看看",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_detect_more_options_request_with_switch_phrase(self) -> None:
+        state = SessionState(budget=500.0, category=["手链"], gift_target="自戴")
+
+        result = self.parser._heuristic_parse(
+            message="换几款看看",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_detect_more_options_request_with_have_other_phrase(self) -> None:
+        state = SessionState(budget=500.0, category=["手链"], gift_target="自戴")
+
+        result = self.parser._heuristic_parse(
+            message="还有别的手串吗",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
     def test_extract_color_and_budget_from_precise_request(self) -> None:
         conditions = self.parser.extract_explicit_conditions("我想要蓝色的项链，预算500元")
 
@@ -53,6 +97,17 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(conditions["category"], ["项链"])
         self.assertEqual(conditions["budget"], 350.0)
         self.assertEqual(conditions["budget_flexibility"], 50.0)
+
+    def test_budget_is_required_before_recommendation_even_with_color_and_target(self) -> None:
+        state = SessionState(category=["手链"], color_preferences=["蓝色"], gift_target="自戴")
+
+        result = self.parser._heuristic_parse(
+            message="送给我自己",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "ASK_FOLLOWUP")
+        self.assertIn("预算", result["followup_question"])
 
 
 if __name__ == "__main__":

@@ -169,6 +169,39 @@ class RecommendationServiceStrictMatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["_strict_match_count"], 1)
         self.assertEqual(color_inference_service.annotated_calls, 1)
 
+    async def test_secondary_inferred_color_does_not_count_as_primary_match(self) -> None:
+        repository = FakeProductRepository(
+            [
+                {
+                    "product_code": "N-200",
+                    "product_name": "白玉手串",
+                    "system_category": "手链",
+                    "wholesale_price": 500.0,
+                    "group_price": 660.0,
+                    "product_image_url": "https://example.com/n-200.jpg",
+                    "suitable_people": "",
+                    "main_material": "和田玉",
+                    "stone_material": "",
+                    "system_attributes": "温润",
+                    "selling_points": "日常佩戴",
+                    "luxury_flag": "",
+                }
+            ]
+        )
+        color_inference_service = FakeColorInferenceService({"N-200": ["白色", "蓝色"]})
+        service = RecommendationService(
+            self.settings,
+            repository,
+            color_inference_service=color_inference_service,
+        )
+
+        results = await service.search(
+            SessionState(budget=500.0, category=["手链"], color_preferences=["蓝色"]),
+            limit=3,
+        )
+
+        self.assertEqual(results, [])
+
 
 if __name__ == "__main__":
     unittest.main()

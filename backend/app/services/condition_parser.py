@@ -406,8 +406,8 @@ class ConditionParser:
             needs_followup = True
         elif (
             session_state.has_meaningful_conditions()
-            and not meaningful
             and self._is_more_options_request(text)
+            and not refresh
         ):
             action = "RERANK_AND_RECOMMEND"
             intent = "ask_more_options"
@@ -443,11 +443,16 @@ class ConditionParser:
         return normalized.strip()
 
     def _is_more_options_request(self, text: str) -> bool:
-        patterns = (
+        direct_patterns = (
             "其他款式",
+            "其他的款式",
             "其他款",
+            "其他的款",
             "别的款式",
+            "别的款式吗",
+            "别的款式呢",
             "别的款",
+            "别的款吗",
             "另外的款式",
             "另外的款",
             "还有别的吗",
@@ -455,14 +460,83 @@ class ConditionParser:
             "还有其他的吗",
             "还有其他款吗",
             "还有其他款式吗",
+            "还有其他的款式吗",
+            "还有其他的款吗",
             "再看看别的",
             "再看别的",
             "换一批",
             "换一组",
             "换几个",
             "重新推荐",
+            "再推荐几款",
+            "再推几款",
+            "重新给我推荐",
+            "重新给我推",
+            "重新来一批",
+            "再来一批",
+            "换几款看看",
+            "换几款",
+            "换别的",
+            "换别的看看",
+            "看看别的",
+            "还有别的款式吗",
+            "还有别的款吗",
+            "还有别的手串吗",
+            "还有别的手链吗",
+            "还有别的项链吗",
+            "还有没有别的",
+            "还有没有其他的",
+            "再给我看看",
+            "再给我推荐",
         )
-        return any(pattern in text for pattern in patterns)
+        if any(pattern in text for pattern in direct_patterns):
+            return True
+
+        rerank_verbs = (
+            "换",
+            "再看",
+            "再推荐",
+            "重推",
+            "重新推荐",
+            "重新给我推荐",
+            "重新来",
+            "再来",
+            "看看别的",
+            "看看其他",
+        )
+        rerank_objects = (
+            "款",
+            "款式",
+            "批",
+            "组",
+            "个",
+            "串",
+            "手串",
+            "手链",
+            "项链",
+            "耳环",
+            "戒指",
+            "选择",
+            "推荐",
+        )
+        availability_patterns = (
+            "还有别的",
+            "还有其他",
+            "有没有别的",
+            "有没有其他",
+        )
+
+        if any(pattern in text for pattern in availability_patterns) and any(
+            item in text for item in rerank_objects
+        ):
+            return True
+
+        if any(verb in text for verb in rerank_verbs) and any(
+            item in text for item in rerank_objects
+        ):
+            return True
+
+        return False
 
     def _merge_llm_result(self, heuristic: dict[str, Any], llm_result: dict[str, Any]) -> dict[str, Any]:
         merged = heuristic.copy()
@@ -975,6 +1049,9 @@ class ConditionParser:
         has_target = gift_target is not None
         has_style = bool(style) or bool(luxury)
 
+        if has_category and not has_budget:
+            return False
+
         # If the user only gives budget + category, keep one more follow-up turn
         # so we can refine by gifting target, material, or style before recommending.
         if has_budget and has_category and not (has_material or has_color or has_target or has_style):
@@ -1005,14 +1082,14 @@ class ConditionParser:
             return "方便告诉我佩戴者大概年龄吗？如果是50岁以上的女性，我会优先按退休妈妈款来帮您筛选。"
         if not category:
             return "您更想看项链、手链、耳饰还是戒指呢？"
+        if budget is None:
+            return "方便告诉我大概预算区间吗？这样我可以更快帮您筛到合适的款。"
         if category and material and budget is None:
             return "这类材质和款式我已经记下了，方便告诉我大概预算区间吗？这样我能先帮您筛掉不合适的款。"
         if category and budget is not None and gift_target is None:
             return "这次您是自己佩戴，还是送女友、妈妈、闺蜜或男友呢？我可以按人群帮您再细分。"
         if gift_target is None:
             return "这次您是自己佩戴，还是送女友、妈妈或闺蜜呢？"
-        if budget is None:
-            return "方便告诉我大概预算区间吗？这样我可以更快帮您筛到合适的款。"
         if not color:
             return "颜色上您更偏蓝色、绿色、红色这类明显色感，还是想要百搭一点的中性色呢？"
         if not material:

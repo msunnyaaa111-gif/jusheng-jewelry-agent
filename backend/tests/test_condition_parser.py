@@ -177,6 +177,30 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(conditions["main_material"], [])
         self.assertEqual(conditions["excluded_main_material"], ["和田玉"])
 
+    def test_extract_negative_material_preference_from_real_chinese_text(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("\u6211\u4e0d\u60f3\u8981\u548c\u7530\u7389\u7684")
+
+        self.assertEqual(conditions["main_material"], [])
+        self.assertEqual(conditions["excluded_main_material"], ["\u548c\u7530\u7389"])
+
+    def test_real_chinese_negative_material_refreshes_existing_recommendation(self) -> None:
+        state = SessionState(
+            budget=300.0,
+            category=["\u624b\u94fe"],
+            gift_target="\u81ea\u6234",
+            zodiac="\u86c7",
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="\u6211\u4e0d\u60f3\u8981\u548c\u7530\u7389\u7684",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertTrue(result["should_refresh_retrieval"])
+        self.assertEqual(result["conditions"]["excluded_main_material"], ["\u548c\u7530\u7389"])
+
     def test_budget_unrestricted_allows_recommendation_without_numeric_budget(self) -> None:
         state = SessionState(category=["手链"], color_preferences=["黄色"])
 

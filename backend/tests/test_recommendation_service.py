@@ -298,6 +298,52 @@ class RecommendationServiceStrictMatchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item["product_code"] for item in results], ["M-200"])
 
+    async def test_excluded_material_filters_out_real_chinese_hetianyu(self) -> None:
+        repository = FakeProductRepository(
+            [
+                {
+                    "product_code": "RC-100",
+                    "product_name": "\u548c\u7530\u7389\u624b\u4e32",
+                    "system_category": "\u624b\u94fe",
+                    "wholesale_price": 300.0,
+                    "group_price": 399.0,
+                    "product_image_url": "https://example.com/rc-100.jpg",
+                    "suitable_people": "",
+                    "main_material": "\u548c\u7530\u7389",
+                    "stone_material": "",
+                    "system_attributes": "\u6e29\u6da6",
+                    "selling_points": "\u65e5\u5e38\u4f69\u6234",
+                    "luxury_flag": "",
+                },
+                {
+                    "product_code": "RC-200",
+                    "product_name": "\u6c34\u6676\u624b\u4e32",
+                    "system_category": "\u624b\u94fe",
+                    "wholesale_price": 310.0,
+                    "group_price": 420.0,
+                    "product_image_url": "https://example.com/rc-200.jpg",
+                    "suitable_people": "",
+                    "main_material": "\u6c34\u6676",
+                    "stone_material": "",
+                    "system_attributes": "\u65f6\u5c1a",
+                    "selling_points": "\u661f\u5ea7\u793c\u7269",
+                    "luxury_flag": "",
+                },
+            ]
+        )
+        service = RecommendationService(self.settings, repository)
+
+        results = await service.search(
+            SessionState(
+                budget=300.0,
+                category=["\u624b\u94fe"],
+                excluded_main_material=["\u548c\u7530\u7389"],
+            ),
+            limit=3,
+        )
+
+        self.assertEqual([item["product_code"] for item in results], ["RC-200"])
+
     async def test_positive_style_prefilter_and_negative_style_exclusion(self) -> None:
         repository = FakeProductRepository(
             [

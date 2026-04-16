@@ -154,6 +154,33 @@ COLOR_KEYWORDS = {
     "银色": ["银色", "银"],
 }
 
+MATERIAL_ALIAS_MAP = {
+    "\u548c\u7530\u7389": [
+        "\u548c\u7530\u7389",
+        "\u548c\u7530\u767d\u7389",
+        "\u767d\u7389",
+        "18k\u548c\u7530\u7389",
+        "18K\u548c\u7530\u7389",
+    ],
+    "\u6c34\u6676": [
+        "\u6c34\u6676",
+        "\u767d\u6c34\u6676",
+        "\u7d2b\u6c34\u6676",
+        "\u9ec4\u6c34\u6676",
+        "\u8336\u6676",
+        "\u53d1\u6676",
+        "\u8d85\u4e03",
+        "\u8349\u8393\u6676",
+    ],
+    "\u73cd\u73e0": ["\u73cd\u73e0", "\u6de1\u6c34\u73cd\u73e0"],
+    "\u9ec4\u91d1": ["\u9ec4\u91d1", "\u8db3\u91d1", "\u91d1\u5b50", "\u91d1\u9970"],
+    "K\u91d1": ["K\u91d1", "18K", "18k", "18K\u91d1", "18k\u91d1"],
+    "\u94f6": ["\u94f6", "925\u94f6", "S925", "s925", "\u7eaf\u94f6"],
+    "\u739b\u7459": ["\u739b\u7459", "\u5357\u7ea2"],
+    "\u7425\u73c0": ["\u7425\u73c0", "\u871c\u8721"],
+    "\u7fe1\u7fe0": ["\u7fe1\u7fe0"],
+}
+
 LUXURY_KEYWORDS = {
     "轻奢": [
         "轻奢", "精致", "有质感", "小轻奢", "精美一点", "细节好一点",
@@ -365,10 +392,22 @@ class ConditionParser:
                     return target
             return text
 
-        if field in {"luxury_intent", "style_preferences", "feature_preferences", "main_material", "stone_material"}:
+        if field in {
+            "luxury_intent",
+            "style_preferences",
+            "feature_preferences",
+            "main_material",
+            "stone_material",
+            "excluded_main_material",
+            "excluded_stone_material",
+        }:
             phrase_map = self._learned_phrase_map(field)
             if text in phrase_map:
                 return phrase_map[text]
+            if field in {"main_material", "stone_material", "excluded_main_material", "excluded_stone_material"}:
+                material_alias = self._canonicalize_material_alias(text)
+                if material_alias:
+                    return material_alias
 
         return text
 
@@ -380,19 +419,33 @@ class ConditionParser:
         if budget is not None:
             budget_unrestricted = False
 
-        excluded_main_material = self._extract_negated_mapped_terms(text, MAIN_MATERIAL_KEYWORDS, "main_material")
-        excluded_stone_material = self._extract_negated_mapped_terms(text, STONE_MATERIAL_KEYWORDS, "stone_material")
+        excluded_main_material = list(
+            dict.fromkeys(
+                [
+                    *self._extract_negated_mapped_terms(text, MAIN_MATERIAL_KEYWORDS, "main_material"),
+                    *self._extract_negated_manual_material_aliases(text),
+                ]
+            )
+        )
+        excluded_stone_material = list(
+            dict.fromkeys(
+                [
+                    *self._extract_negated_mapped_terms(text, STONE_MATERIAL_KEYWORDS, "stone_material"),
+                    *self._extract_negated_manual_material_aliases(text),
+                ]
+            )
+        )
         excluded_feature_preferences = self._extract_negated_mapped_terms(text, FEATURE_KEYWORDS, "feature_preferences")
         excluded_style_preferences = self._extract_negated_mapped_terms(text, STYLE_KEYWORDS, "style_preferences")
 
         main_material = [
-            item for item in self._extract_main_materials(text)
+            item for item in [*self._extract_main_materials(text), *self._extract_manual_material_aliases(text)]
             if item not in excluded_main_material
             and item not in excluded_stone_material
             and not any(item in excluded or excluded in item for excluded in [*excluded_main_material, *excluded_stone_material])
         ]
         stone_material = [
-            item for item in self._extract_stone_materials(text)
+            item for item in [*self._extract_stone_materials(text), *self._extract_manual_material_aliases(text)]
             if item not in excluded_stone_material
             and item not in excluded_main_material
             and not any(item in excluded or excluded in item for excluded in [*excluded_main_material, *excluded_stone_material])
@@ -1048,6 +1101,27 @@ class ConditionParser:
                 hits.append(canonical)
         return hits
 
+    def _extract_manual_material_aliases(self, text: str) -> list[str]:
+        hits: list[str] = []
+        for canonical, aliases in MATERIAL_ALIAS_MAP.items():
+            if any(alias in text for alias in aliases):
+                hits.append(canonical)
+        return hits
+
+    def _canonicalize_material_alias(self, text: str) -> str | None:
+        candidate = str(text or "").strip()
+        if not candidate:
+            return None
+        lowered = candidate.lower()
+        for canonical, aliases in MATERIAL_ALIAS_MAP.items():
+            canonical_lower = canonical.lower()
+            if candidate == canonical or lowered == canonical_lower:
+                return canonical
+            for alias in aliases:
+                if candidate == alias or lowered == alias.lower():
+                    return canonical
+        return None
+
     def _extract_negated_mapped_terms(
         self,
         text: str,
@@ -1068,6 +1142,22 @@ class ConditionParser:
                 continue
             escaped = re.escape(candidate)
             if any(re.search(pattern.format(term=escaped), text) for pattern in negation_patterns):
+                hits.append(canonical)
+        return hits
+
+    def _extract_negated_manual_material_aliases(self, text: str) -> list[str]:
+        hits: list[str] = []
+        negation_patterns = (
+            r"(?:不喜欢|不想要|不想看|不要|别要|别给我|不考虑|排除|避开|不爱|别推荐)\s*{term}(?:的)?",
+            r"{term}(?:这类|这种|风格|款式|材质)?\s*(?:不要|不喜欢|不想要|不想看|不考虑)",
+        )
+        for canonical, aliases in MATERIAL_ALIAS_MAP.items():
+            if canonical in hits:
+                continue
+            if any(
+                any(re.search(pattern.format(term=re.escape(alias)), text) for pattern in negation_patterns)
+                for alias in aliases
+            ):
                 hits.append(canonical)
         return hits
 

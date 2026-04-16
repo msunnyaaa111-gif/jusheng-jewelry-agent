@@ -33,6 +33,35 @@ MATERIAL_SYNONYMS = {
 }
 
 
+MATERIAL_SYNONYMS.update(
+    {
+        "\u548c\u7530\u7389": [
+            "\u548c\u7530\u7389",
+            "\u548c\u7530\u767d\u7389",
+            "\u767d\u7389",
+            "18k\u548c\u7530\u7389",
+            "18K\u548c\u7530\u7389",
+        ],
+        "\u6c34\u6676": [
+            "\u6c34\u6676",
+            "\u767d\u6c34\u6676",
+            "\u7d2b\u6c34\u6676",
+            "\u9ec4\u6c34\u6676",
+            "\u8336\u6676",
+            "\u53d1\u6676",
+            "\u8d85\u4e03",
+            "\u8349\u8393\u6676",
+        ],
+        "\u73cd\u73e0": ["\u73cd\u73e0", "\u6de1\u6c34\u73cd\u73e0"],
+        "\u9ec4\u91d1": ["\u9ec4\u91d1", "\u8db3\u91d1", "\u91d1\u5b50", "\u91d1\u9970"],
+        "K\u91d1": ["K\u91d1", "18K", "18k", "18K\u91d1", "18k\u91d1"],
+        "\u94f6": ["\u94f6", "925\u94f6", "S925", "s925", "\u7eaf\u94f6"],
+        "\u739b\u7459": ["\u739b\u7459", "\u5357\u7ea2"],
+        "\u7425\u73c0": ["\u7425\u73c0", "\u871c\u8721"],
+        "\u7fe1\u7fe0": ["\u7fe1\u7fe0"],
+    }
+)
+
 CONSTELLATION_RULES = {
     "白羊座": {"main_material": ["K金"], "style_preferences": ["大气"]},
     "金牛座": {"main_material": ["黄金", "和田玉"], "style_preferences": ["高级感"]},

@@ -28,6 +28,7 @@ class LongCatClient:
         *,
         system_prompt: str,
         user_payload: dict[str, Any],
+        image_inputs: list[str] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1200,
         model: str | None = None,
@@ -42,6 +43,7 @@ class LongCatClient:
         payload = self._build_request_payload(
             system_prompt=system_prompt,
             user_payload=user_payload,
+            image_inputs=image_inputs,
             temperature=temperature,
             max_tokens=max_tokens,
             model=model,
@@ -76,6 +78,7 @@ class LongCatClient:
         *,
         system_prompt: str,
         user_payload: dict[str, Any],
+        image_inputs: list[str] | None = None,
         temperature: float = 0.2,
         max_tokens: int = 1200,
         model: str | None = None,
@@ -90,6 +93,7 @@ class LongCatClient:
         payload = self._build_request_payload(
             system_prompt=system_prompt,
             user_payload=user_payload,
+            image_inputs=image_inputs,
             temperature=temperature,
             max_tokens=max_tokens,
             model=model,
@@ -161,6 +165,7 @@ class LongCatClient:
         *,
         system_prompt: str,
         user_payload: dict[str, Any],
+        image_inputs: list[str] | None,
         temperature: float,
         max_tokens: int,
         model: str | None,
@@ -170,6 +175,23 @@ class LongCatClient:
         user_text = json.dumps(user_payload, ensure_ascii=False)
 
         if self._uses_omni_format(resolved_model):
+            user_content: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": user_text,
+                }
+            ]
+            for image_input in image_inputs or []:
+                if not image_input:
+                    continue
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_input,
+                        },
+                    }
+                )
             return {
                 "model": resolved_model,
                 "messages": [
@@ -184,12 +206,7 @@ class LongCatClient:
                     },
                     {
                         "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": user_text,
-                            }
-                        ],
+                        "content": user_content,
                     },
                 ],
                 "temperature": max(temperature, 0.01),
@@ -197,6 +214,9 @@ class LongCatClient:
                 "stream": stream,
                 "output_modalities": ["text"],
             }
+
+        if image_inputs:
+            raise ValueError(f"Model {resolved_model} does not support image inputs.")
 
         return {
             "model": resolved_model,
@@ -215,3 +235,7 @@ class LongCatClient:
     @staticmethod
     def _uses_omni_format(model_name: str) -> bool:
         return "omni" in model_name.lower()
+
+    @staticmethod
+    def supports_image_inputs(model_name: str) -> bool:
+        return LongCatClient._uses_omni_format(model_name)

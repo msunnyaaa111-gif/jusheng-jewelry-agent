@@ -20,6 +20,7 @@ class SessionState(BaseModel):
     excluded_categories: list[str] = Field(default_factory=list)
     main_material: list[str] = Field(default_factory=list)
     stone_material: list[str] = Field(default_factory=list)
+    color_preferences: list[str] = Field(default_factory=list)
     gift_target: str | None = None
     usage_scene: str | None = None
     style_preferences: list[str] = Field(default_factory=list)
@@ -35,6 +36,7 @@ class SessionState(BaseModel):
     last_action: str | None = None
     last_retrieval_hash: str | None = None
     last_recommended_codes: list[str] = Field(default_factory=list)
+    seen_recommended_codes: list[str] = Field(default_factory=list)
 
     def has_meaningful_conditions(self) -> bool:
         return any(
@@ -44,6 +46,7 @@ class SessionState(BaseModel):
                 bool(self.category),
                 bool(self.main_material),
                 bool(self.stone_material),
+                bool(self.color_preferences),
                 self.gift_target is not None,
                 self.usage_scene is not None,
                 bool(self.style_preferences),

@@ -145,11 +145,14 @@ function App() {
   }
 
   async function sendStreamMessage(text: string, assistantId: string) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 90000);
     const response = await fetch(buildApiUrl("/api/chat/stream"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
+      signal: controller.signal,
       body: JSON.stringify({
         session_id: sessionId,
         user_id: userId,
@@ -166,75 +169,96 @@ function App() {
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
+    let receivedDone = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+
+        for (const chunk of chunks) {
+          const parsed = parseSseChunk(chunk);
+          if (!parsed) {
+            continue;
+          }
+
+          if (parsed.event === "status") {
+            const textValue = String(parsed.data.text ?? "");
+            const displayMode =
+              parsed.data.display_mode === "cards" || parsed.data.display_mode === "text"
+                ? (parsed.data.display_mode as "cards" | "text")
+                : undefined;
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? { ...message, status: textValue, displayMode: displayMode ?? message.displayMode }
+                  : message,
+              ),
+            );
+            continue;
+          }
+
+          if (parsed.event === "delta") {
+            const textValue = String(parsed.data.text ?? "");
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text:
+                        message.displayMode === "cards" ? message.text : `${message.text}${textValue}`,
+                      status: undefined,
+                    }
+                  : message,
+              ),
+            );
+            continue;
+          }
+
+          if (parsed.event === "done") {
+            receivedDone = true;
+            const finalPayload = parsed.data as ChatResponse;
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      text: finalPayload.reply_text,
+                      purchaseAdvice: finalPayload.purchase_advice,
+                      products: finalPayload.recommended_products,
+                      action: finalPayload.action,
+                      followupQuestion: finalPayload.followup_question,
+                      displayMode: finalPayload.recommended_products.length ? "cards" : "text",
+                      status: undefined,
+                    }
+                  : message,
+              ),
+            );
+          }
+        }
       }
-
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split("\n\n");
-      buffer = chunks.pop() ?? "";
-
-      for (const chunk of chunks) {
-        const parsed = parseSseChunk(chunk);
-        if (!parsed) {
-          continue;
-        }
-
-        if (parsed.event === "status") {
-          const textValue = String(parsed.data.text ?? "");
-          const displayMode =
-            parsed.data.display_mode === "cards" || parsed.data.display_mode === "text"
-              ? (parsed.data.display_mode as "cards" | "text")
-              : undefined;
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantId
-                ? { ...message, status: textValue, displayMode: displayMode ?? message.displayMode }
-                : message,
-            ),
-          );
-          continue;
-        }
-
-        if (parsed.event === "delta") {
-          const textValue = String(parsed.data.text ?? "");
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantId
-                ? {
-                    ...message,
-                    text:
-                      message.displayMode === "cards" ? message.text : `${message.text}${textValue}`,
-                    status: undefined,
-                  }
-                : message,
-            ),
-          );
-          continue;
-        }
-
-        if (parsed.event === "done") {
-          const finalPayload = parsed.data as ChatResponse;
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantId
-                ? {
-                    ...message,
-                    text: finalPayload.reply_text,
-                    purchaseAdvice: finalPayload.purchase_advice,
-                    products: finalPayload.recommended_products,
-                    action: finalPayload.action,
-                    followupQuestion: finalPayload.followup_question,
-                    displayMode: finalPayload.recommended_products.length ? "cards" : "text",
-                    status: undefined,
-                  }
-                : message,
-            ),
-          );
-        }
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (!receivedDone) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantId
+              ? {
+                  ...message,
+                  status: undefined,
+                  text:
+                    message.text ||
+                    "这一轮返回中途断开了，我已经结束等待。您可以再发一次，我会继续帮您看。",
+                }
+              : message,
+          ),
+        );
       }
     }
   }

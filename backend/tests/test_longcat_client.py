@@ -17,6 +17,7 @@ class LongCatClientPayloadTests(unittest.TestCase):
         payload = client._build_request_payload(
             system_prompt="system",
             user_payload={"text": "hello"},
+            image_inputs=None,
             temperature=0.4,
             max_tokens=100,
             model=None,
@@ -38,6 +39,7 @@ class LongCatClientPayloadTests(unittest.TestCase):
         payload = client._build_request_payload(
             system_prompt="system",
             user_payload={"text": "hello"},
+            image_inputs=None,
             temperature=0.4,
             max_tokens=100,
             model=None,
@@ -50,6 +52,29 @@ class LongCatClientPayloadTests(unittest.TestCase):
         self.assertEqual(payload["messages"][1]["content"][0]["type"], "text")
         self.assertEqual(payload["output_modalities"], ["text"])
         self.assertTrue(payload["stream"])
+
+    def test_omni_can_attach_image_inputs(self) -> None:
+        settings = Settings(
+            longcat_api_key="test-key",
+            longcat_model="LongCat-Flash-Omni-2603",
+        )
+        client = LongCatClient(settings)
+
+        payload = client._build_request_payload(
+            system_prompt="system",
+            user_payload={"text": "hello"},
+            image_inputs=["data:image/png;base64,abc123"],
+            temperature=0.4,
+            max_tokens=100,
+            model=None,
+            stream=False,
+        )
+
+        self.assertEqual(payload["messages"][1]["content"][1]["type"], "image_url")
+        self.assertEqual(
+            payload["messages"][1]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,abc123",
+        )
 
 
 if __name__ == "__main__":

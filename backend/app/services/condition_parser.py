@@ -121,6 +121,18 @@ STYLE_KEYWORDS = [
     "通透",
 ]
 
+COLOR_KEYWORDS = {
+    "蓝色": ["蓝色", "蓝", "海蓝", "天蓝", "宝蓝", "蓝调", "蓝宝", "蓝水"],
+    "绿色": ["绿色", "绿", "翠绿", "青绿", "墨绿"],
+    "红色": ["红色", "红", "酒红", "玫红", "朱红"],
+    "粉色": ["粉色", "粉", "少女粉", "樱花粉"],
+    "紫色": ["紫色", "紫", "薰衣草紫"],
+    "白色": ["白色", "白", "奶白", "米白"],
+    "黑色": ["黑色", "黑", "曜黑"],
+    "金色": ["金色", "金", "香槟金"],
+    "银色": ["银色", "银"],
+}
+
 LUXURY_KEYWORDS = {
     "轻奢": [
         "轻奢", "精致", "有质感", "小轻奢", "精美一点", "细节好一点",
@@ -223,7 +235,7 @@ class ConditionParser:
     def _should_use_heuristic_only(self, *, message: str, heuristic: dict[str, Any]) -> bool:
         normalized = message.strip()
         action = heuristic.get("action")
-        if action in {"GREETING", "ASK_FOLLOWUP"}:
+        if action in {"GREETING", "ASK_FOLLOWUP", "RERANK_AND_RECOMMEND"}:
             return True
 
         if normalized.lower() in {"好", "好的", "可以", "行", "嗯", "嗯嗯", "要", "不要", "不用", "ok", "okay"}:
@@ -237,6 +249,7 @@ class ConditionParser:
                 1 if conditions.get("excluded_categories") else 0,
                 1 if conditions.get("main_material") else 0,
                 1 if conditions.get("stone_material") else 0,
+                1 if conditions.get("color_preferences") else 0,
                 1 if conditions.get("gift_target") is not None else 0,
                 1 if conditions.get("style_preferences") else 0,
                 1 if conditions.get("luxury_intent") else 0,
@@ -267,6 +280,7 @@ class ConditionParser:
             "excluded_categories",
             "main_material",
             "stone_material",
+            "color_preferences",
             "style_preferences",
             "luxury_intent",
             "image_features",
@@ -333,6 +347,7 @@ class ConditionParser:
             "excluded_categories": self._extract_negated_categories(text),
             "main_material": self._extract_main_materials(text),
             "stone_material": self._extract_stone_materials(text),
+            "color_preferences": self._extract_color_preferences(text),
             "gift_target": self._extract_gift_target(text),
             "usage_scene": None,
             "style_preferences": self._extract_style_preferences(text),
@@ -355,6 +370,7 @@ class ConditionParser:
                 conditions["excluded_categories"],
                 conditions["main_material"],
                 conditions["stone_material"],
+                conditions["color_preferences"],
                 conditions["gift_target"] is not None,
                 conditions["style_preferences"],
                 conditions["luxury_intent"],
@@ -375,6 +391,7 @@ class ConditionParser:
                 "category",
                 "main_material",
                 "stone_material",
+                "color_preferences",
                 "gift_target",
                 "constellation",
                 "zodiac",
@@ -387,6 +404,14 @@ class ConditionParser:
             action = "GREETING"
             intent = "greeting"
             needs_followup = True
+        elif (
+            session_state.has_meaningful_conditions()
+            and not meaningful
+            and self._is_more_options_request(text)
+        ):
+            action = "RERANK_AND_RECOMMEND"
+            intent = "ask_more_options"
+            needs_followup = False
         elif meaningful or session_state.has_meaningful_conditions():
             enough = self._has_enough_for_recommendation(conditions, session_state)
             action = "RETRIEVE_AND_RECOMMEND" if enough else "ASK_FOLLOWUP"
@@ -416,6 +441,28 @@ class ConditionParser:
         normalized = normalized.replace("\ufeff", "").replace("\u200b", "").replace("\xa0", " ")
         normalized = re.sub(r"\s+", " ", normalized)
         return normalized.strip()
+
+    def _is_more_options_request(self, text: str) -> bool:
+        patterns = (
+            "其他款式",
+            "其他款",
+            "别的款式",
+            "别的款",
+            "另外的款式",
+            "另外的款",
+            "还有别的吗",
+            "还有别的么",
+            "还有其他的吗",
+            "还有其他款吗",
+            "还有其他款式吗",
+            "再看看别的",
+            "再看别的",
+            "换一批",
+            "换一组",
+            "换几个",
+            "重新推荐",
+        )
+        return any(pattern in text for pattern in patterns)
 
     def _merge_llm_result(self, heuristic: dict[str, Any], llm_result: dict[str, Any]) -> dict[str, Any]:
         merged = heuristic.copy()
@@ -470,14 +517,14 @@ class ConditionParser:
             if high >= 100:
                 return round((low + high) / 2, 2)
 
-        patterns = [
-            r"(?:预算|价位|预算是|预算在|预算改成|改成|控制在|大概|大约)\s*(\d{2,6})(?:\s*(?:元|块))?(?:\s*(?:左右|以内|以下|上下))?",
+        arabic_patterns = [
+            r"(?:预算|价位|预算是|预算在|预算改成|改成|控制在|大概|大约)(?:在)?\s*(\d{2,6})(?:\s*(?:元|块))?(?:\s*(?:左右|以内|以下|上下))?",
             r"(\d{2,6})\s*(?:元|块)(?:\s*(?:左右|以内|以下|上下))?",
             r"(\d{2,6})\s*(?:左右|以内|以下|上下)",
             r"(\d{2,6})\s*预算",
         ]
 
-        for pattern in patterns:
+        for pattern in arabic_patterns:
             match = re.search(pattern, sanitized)
             if not match:
                 continue
@@ -485,6 +532,22 @@ class ConditionParser:
             if value < 100:
                 continue
             return value
+
+        chinese_patterns = [
+            r"(?:预算|价位|预算是|预算在|预算改成|改成|控制在|大概|大约)(?:在)?\s*([零〇一二两三四五六七八九十百千万\d]{1,8})",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*(?:元|块)(?:\s*(?:左右|以内|以下|上下))?",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*(?:左右|以内|以下|上下)",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*预算",
+            r"([零〇一二两三四五六七八九十百千万]{2,8})(?=\s*的?(?:项链|手链|耳环|戒指|手串|吊坠|首饰|饰品))",
+        ]
+
+        for pattern in chinese_patterns:
+            match = re.search(pattern, sanitized)
+            if not match:
+                continue
+            value, _ = self._parse_budget_token(match.group(1))
+            if value is not None and value >= 100:
+                return value
         return None
 
     def _extract_budget_flexibility(self, text: str) -> float | None:
@@ -493,15 +556,137 @@ class ConditionParser:
             r"(\d{2,6})\s*(?:-|—|–|到|至|~)\s*(\d{2,6})\s*(?:元|块)?(?:\s*(?:区间|之间|左右))?",
             sanitized,
         )
-        if not range_match:
+        if range_match:
+            low = float(range_match.group(1))
+            high = float(range_match.group(2))
+            if low > high:
+                low, high = high, low
+            if high >= 100:
+                return round((high - low) / 2, 2)
+
+        chinese_patterns = [
+            r"(?:预算|价位|预算是|预算在|预算改成|改成|控制在|大概|大约)(?:在)?\s*([零〇一二两三四五六七八九十百千万\d]{1,8})",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*(?:元|块)(?:\s*(?:左右|以内|以下|上下))?",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*(?:左右|以内|以下|上下)",
+            r"([零〇一二两三四五六七八九十百千万\d]{1,8})\s*预算",
+            r"([零〇一二两三四五六七八九十百千万]{2,8})(?=\s*的?(?:项链|手链|耳环|戒指|手串|吊坠|首饰|饰品))",
+        ]
+        for pattern in chinese_patterns:
+            match = re.search(pattern, sanitized)
+            if not match:
+                continue
+            _, flexibility = self._parse_budget_token(match.group(1))
+            if flexibility is not None and flexibility >= 0:
+                return flexibility
+        return None
+
+    def _parse_budget_token(self, raw_token: str) -> tuple[float | None, float | None]:
+        token = str(raw_token or "").strip()
+        token = token.replace("人民币", "").replace("预算", "").replace("块钱", "").replace("块", "").replace("元", "")
+        token = token.replace("左右", "").replace("以内", "").replace("以下", "").replace("上下", "")
+        token = token.replace("大概", "").replace("大约", "").strip()
+        if not token:
+            return None, None
+
+        if token.isdigit():
+            value = float(token)
+            return (value, None) if value >= 100 else (None, None)
+
+        colloquial_range = re.fullmatch(r"([一二两三四五六七八九])([一二三四五六七八九])(百|千|万)", token)
+        if colloquial_range:
+            low_digit = self._chinese_digit_value(colloquial_range.group(1))
+            high_digit = self._chinese_digit_value(colloquial_range.group(2))
+            unit = {"百": 100, "千": 1000, "万": 10000}[colloquial_range.group(3)]
+            if low_digit is not None and high_digit is not None and low_digit <= high_digit:
+                low = float(low_digit * unit)
+                high = float(high_digit * unit)
+                return round((low + high) / 2, 2), round((high - low) / 2, 2)
+
+        value = self._parse_chinese_number(token)
+        if value is None or value < 100:
+            return None, None
+        return float(value), None
+
+    def _parse_chinese_number(self, raw_token: str) -> int | None:
+        token = str(raw_token or "").strip()
+        if not token:
             return None
-        low = float(range_match.group(1))
-        high = float(range_match.group(2))
-        if low > high:
-            low, high = high, low
-        if high < 100:
+        token = token.replace("两", "二").replace("〇", "零")
+        if token.isdigit():
+            return int(token)
+        if not re.fullmatch(r"[零一二三四五六七八九十百千万]+", token):
             return None
-        return round((high - low) / 2, 2)
+
+        short_thousand = re.fullmatch(r"([一二三四五六七八九])千([一二三四五六七八九])", token)
+        if short_thousand:
+            high = self._chinese_digit_value(short_thousand.group(1))
+            low = self._chinese_digit_value(short_thousand.group(2))
+            if high is not None and low is not None:
+                return high * 1000 + low * 100
+
+        short_hundred = re.fullmatch(r"([一二三四五六七八九])百([一二三四五六七八九])", token)
+        if short_hundred:
+            high = self._chinese_digit_value(short_hundred.group(1))
+            low = self._chinese_digit_value(short_hundred.group(2))
+            if high is not None and low is not None:
+                return high * 100 + low * 10
+
+        short_ten_thousand = re.fullmatch(r"([一二三四五六七八九])万([一二三四五六七八九])", token)
+        if short_ten_thousand:
+            high = self._chinese_digit_value(short_ten_thousand.group(1))
+            low = self._chinese_digit_value(short_ten_thousand.group(2))
+            if high is not None and low is not None:
+                return high * 10000 + low * 1000
+
+        digit_map = {
+            "零": 0,
+            "一": 1,
+            "二": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }
+        unit_map = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+
+        total = 0
+        section = 0
+        number = 0
+        for char in token:
+            if char in digit_map:
+                number = digit_map[char]
+                continue
+            unit = unit_map.get(char)
+            if unit is None:
+                return None
+            if unit == 10000:
+                section = (section + number) or 1
+                total += section * unit
+                section = 0
+                number = 0
+                continue
+            if number == 0:
+                number = 1
+            section += number * unit
+            number = 0
+        return total + section + number
+
+    def _chinese_digit_value(self, char: str) -> int | None:
+        return {
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }.get(char)
 
     def _extract_categories(self, text: str) -> list[str]:
         negated = set(self._extract_negated_categories(text))
@@ -535,6 +720,13 @@ class ConditionParser:
 
     def _extract_style_preferences(self, text: str) -> list[str]:
         return self._extract_mapped_terms(text, STYLE_KEYWORDS, "style_preferences")
+
+    def _extract_color_preferences(self, text: str) -> list[str]:
+        hits: list[str] = []
+        for canonical, variants in COLOR_KEYWORDS.items():
+            if any(variant in text for variant in variants):
+                hits.append(canonical)
+        return hits
 
     def _extract_mapped_terms(
         self,
@@ -769,6 +961,7 @@ class ConditionParser:
             or conditions.get("stone_material")
             or session_state.stone_material
         )
+        color = conditions.get("color_preferences") or session_state.color_preferences
         gift_target = conditions.get("gift_target") or session_state.gift_target
         style = conditions.get("style_preferences") or session_state.style_preferences
         luxury = conditions.get("luxury_intent") or session_state.luxury_intent
@@ -778,15 +971,16 @@ class ConditionParser:
         has_budget = budget is not None
         has_category = bool(category)
         has_material = bool(material)
+        has_color = bool(color)
         has_target = gift_target is not None
         has_style = bool(style) or bool(luxury)
 
         # If the user only gives budget + category, keep one more follow-up turn
         # so we can refine by gifting target, material, or style before recommending.
-        if has_budget and has_category and not (has_material or has_target or has_style):
+        if has_budget and has_category and not (has_material or has_color or has_target or has_style):
             return False
 
-        detailed_signal_count = sum([has_category, has_material, has_target, has_style])
+        detailed_signal_count = sum([has_category, has_material, has_color, has_target, has_style])
         if has_budget and detailed_signal_count >= 1:
             return True
         if detailed_signal_count >= 3:
@@ -803,6 +997,7 @@ class ConditionParser:
             or conditions.get("stone_material")
             or session_state.stone_material
         )
+        color = conditions.get("color_preferences") or session_state.color_preferences
         style = conditions.get("style_preferences") or session_state.style_preferences
         luxury = conditions.get("luxury_intent") or session_state.luxury_intent
 
@@ -818,6 +1013,8 @@ class ConditionParser:
             return "这次您是自己佩戴，还是送女友、妈妈或闺蜜呢？"
         if budget is None:
             return "方便告诉我大概预算区间吗？这样我可以更快帮您筛到合适的款。"
+        if not color:
+            return "颜色上您更偏蓝色、绿色、红色这类明显色感，还是想要百搭一点的中性色呢？"
         if not material:
             return "材质上您会更偏黄金、K金、珍珠、和田玉还是红宝石这类方向呢？"
         if not style and not luxury:

@@ -384,29 +384,48 @@ class DialogueService:
         retrieval_hash = self.recommendation_service.build_retrieval_hash(state)
         should_refresh = parsed.get("should_refresh_retrieval", False) or state.last_retrieval_hash != retrieval_hash
         action = parsed.get("action", "ASK_FOLLOWUP")
+        if should_refresh:
+            state.seen_recommended_codes = []
 
         recommended_products: list[dict[str, Any]] = []
         followup_question = parsed.get("followup_question")
 
         if action in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"}:
-            if should_refresh or not state.last_recommended_codes:
-                recommended_products = self.recommendation_service.search(state)
-                state.last_recommended_codes = [item["product_code"] for item in recommended_products]
+            if action == "RERANK_AND_RECOMMEND":
+                recommended_products = await self.recommendation_service.search(
+                    state,
+                    exclude_product_codes=state.seen_recommended_codes,
+                )
+            elif should_refresh or not state.last_recommended_codes:
+                recommended_products = await self.recommendation_service.search(state)
                 state.last_retrieval_hash = retrieval_hash
             else:
-                recommended_products = self.recommendation_service.search(state)
+                recommended_products = await self.recommendation_service.search(state)
 
             if not recommended_products:
+                if action == "RERANK_AND_RECOMMEND" and state.seen_recommended_codes:
+                    action = "EXPLAIN_NO_RESULT"
+                    parsed["notes_for_backend"] = [
+                        *(parsed.get("notes_for_backend") or []),
+                        "no_more_fresh_recommendations",
+                    ]
                 alternative_category_followup = self._build_empty_result_alternative_followup(state)
-                if alternative_category_followup:
+                if action != "EXPLAIN_NO_RESULT" and alternative_category_followup:
                     action = "ASK_FOLLOWUP"
                     followup_question = alternative_category_followup
                     parsed["followup_question"] = alternative_category_followup
                     state.pending_followup_type = "premium_alternative_category"
                     state.pending_followup_options = self._suggest_alternative_categories(state)
-                else:
+                elif action != "EXPLAIN_NO_RESULT":
                     action = "EXPLAIN_NO_RESULT"
             else:
+                current_codes = [item["product_code"] for item in recommended_products]
+                state.last_recommended_codes = current_codes
+                if action == "RERANK_AND_RECOMMEND":
+                    state.seen_recommended_codes = list(dict.fromkeys([*state.seen_recommended_codes, *current_codes]))
+                else:
+                    state.seen_recommended_codes = current_codes
+                state.last_retrieval_hash = retrieval_hash
                 budget_gap_followup = self._build_budget_gap_followup(state, recommended_products)
                 if budget_gap_followup:
                     action = "ASK_FOLLOWUP"
@@ -717,6 +736,7 @@ class DialogueService:
                 "excluded_categories",
                 "main_material",
                 "stone_material",
+                "color_preferences",
                 "style_preferences",
                 "luxury_intent",
                 "image_features",
@@ -921,6 +941,13 @@ class DialogueService:
             )
 
         if action == "EXPLAIN_NO_RESULT":
+            notes = parsed.get("notes_for_backend") or []
+            if "no_more_fresh_recommendations" in notes:
+                return (
+                    "我刚按您刚才这组条件继续往下筛了一轮，这一轮能补充的新款已经比较少了，所以不是系统一直重复同一批，"
+                    "而是当前条件下更匹配的款式基本已经看完了。\n\n"
+                    "如果您愿意，我可以马上换个方向继续帮您找，比如放宽一点预算、换材质，或者改成更日常/更显贵的风格。"
+                )
             return (
                 "我刚刚按您现在的条件帮您筛了一轮，当前完全匹配的款式还比较少。\n\n"
                 "如果您愿意，我可以帮您稍微放宽一点预算范围，或者换成相近的材质、风格或品类，再继续给您补一轮更贴近的推荐。"
@@ -970,6 +997,7 @@ class DialogueService:
             "session_state": compact_state,
             "condition_changes": parsed.get("condition_changes", []),
             "followup_question": parsed.get("followup_question"),
+            "notes_for_backend": parsed.get("notes_for_backend", []),
             "products": compact_products,
         }
 
@@ -992,6 +1020,13 @@ class DialogueService:
             return f"我先了解到了您的部分需求，这样我会更好帮您筛选。{question}"
 
         if action == "EXPLAIN_NO_RESULT":
+            notes = parsed.get("notes_for_backend") or []
+            if "no_more_fresh_recommendations" in notes:
+                return (
+                    "我刚按您刚才这组条件继续往下筛了一轮，这一轮能补充的新款已经比较少了，所以不是系统一直重复同一批，"
+                    "而是当前条件下更匹配的款式基本已经看完了。"
+                    "如果您愿意，我可以继续按预算、材质或风格帮您换个方向再找一轮。"
+                )
             return (
                 "我刚按您现在的条件帮您筛了一轮，当前命中的款式比较少。"
                 "如果您愿意，我可以帮您稍微放宽一点预算区间，或者换一个相近材质，再给您补一轮更合适的推荐。"
@@ -1068,6 +1103,32 @@ class DialogueService:
         state: SessionState,
         products: list[dict[str, Any]],
     ) -> str:
+        match_count = len(products[:3])
+        parts: list[str] = []
+
+        if state.budget is not None:
+            parts.append(f"这次我先按您 {self._format_price(state.budget)} 左右的预算")
+        else:
+            parts.append("我先按您刚刚补充的条件")
+
+        if state.gift_target == "自戴":
+            parts.append("和日常自戴的方向")
+        elif state.gift_target == "妈妈":
+            parts.append("和给妈妈挑礼物的方向")
+        elif state.gift_target:
+            parts.append(f"和给{state.gift_target}挑选的方向")
+
+        if state.category:
+            parts.append(f"重新筛了 {match_count} 款更贴近{state.category[0]}需求的商品")
+        else:
+            parts.append(f"重新筛了 {match_count} 款更贴近当前需求的商品")
+
+        if match_count < 3:
+            parts.append(f"，当前条件下先找到 {match_count} 款更匹配的选项")
+
+        closing = "这一轮我优先按当前条件做了严格筛选，下面这几款会更贴近您现在的需求。"
+        return "".join(parts) + "，" + closing
+
         parts = []
         if state.budget is not None:
             parts.append(f"这次我先按您 {self._format_price(state.budget)} 左右的预算")

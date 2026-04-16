@@ -7,6 +7,7 @@ from typing import Any
 from app.core.config import Settings
 from app.models.session import SessionState
 from app.repositories.product_repository import ProductRepository
+from app.services.product_color_inference_service import ProductColorInferenceService
 
 PREMIUM_HINT_KEYWORDS = [
     "K金",
@@ -64,9 +65,15 @@ ZODIAC_RULES = {
 
 
 class RecommendationService:
-    def __init__(self, settings: Settings, product_repository: ProductRepository) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        product_repository: ProductRepository,
+        color_inference_service: ProductColorInferenceService | None = None,
+    ) -> None:
         self.settings = settings
         self.product_repository = product_repository
+        self.color_inference_service = color_inference_service
 
     def build_retrieval_hash(self, state: SessionState) -> str:
         payload = {
@@ -76,6 +83,7 @@ class RecommendationService:
             "excluded_categories": state.excluded_categories,
             "main_material": state.main_material,
             "stone_material": state.stone_material,
+            "color_preferences": state.color_preferences,
             "gift_target": state.gift_target,
             "style_preferences": state.style_preferences,
             "luxury_intent": state.luxury_intent,
@@ -88,33 +96,33 @@ class RecommendationService:
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
 
-    def search(self, state: SessionState, limit: int = 3) -> list[dict[str, Any]]:
+    async def search(
+        self,
+        state: SessionState,
+        limit: int = 3,
+        exclude_product_codes: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         self.product_repository.load_catalog()
         products = self.product_repository.products
         symbol_preferences = self._collect_symbol_preferences(state)
         priority_profile = self._build_priority_profile(state)
-        used_budget_fallback = False
+        excluded_codes = {code for code in (exclude_product_codes or []) if code}
 
         candidates = self._filter_products(
             products=products,
             state=state,
             tolerance=self.settings.default_budget_tolerance,
         )
-        if len(candidates) < 3 and state.budget is not None:
-            candidates = self._filter_products(
-                products=products,
-                state=state,
-                tolerance=self.settings.expanded_budget_tolerance,
-            )
+        if excluded_codes:
+            candidates = [
+                product
+                for product in candidates
+                if product.get("product_code") not in excluded_codes
+            ]
 
-        candidates = self._apply_priority_prefilters(candidates, state)
-        if not candidates and state.budget is not None:
-            candidates = self._find_nearest_budget_candidates(
-                products=products,
-                state=state,
-                limit=max(limit * 3, 8),
-            )
-            used_budget_fallback = bool(candidates)
+        candidates = await self._apply_priority_prefilters(candidates, state)
+        if not candidates:
+            return []
 
         scored = []
         for product in candidates:
@@ -122,28 +130,14 @@ class RecommendationService:
             distance = self._budget_distance(product, state.budget)
             scored.append((score, distance, product))
 
-        if used_budget_fallback and state.premium_upgrade_intent:
-            scored.sort(
-                key=lambda item: (
-                    -item[0],
-                    -(item[2].get("wholesale_price") or 0),
-                    item[1],
-                )
-            )
-        elif used_budget_fallback:
-            scored.sort(key=lambda item: (item[1], -item[0], item[2].get("wholesale_price") or float("inf")))
-        else:
-            scored.sort(key=lambda item: item[0], reverse=True)
+        scored.sort(key=lambda item: item[0], reverse=True)
 
         results = []
-        for score, distance, product in scored[:limit]:
-            if used_budget_fallback:
-                enriched = dict(product)
-                enriched["_budget_fallback"] = True
-                enriched["_budget_distance"] = distance
-                results.append(enriched)
-            else:
-                results.append(product)
+        strict_match_count = min(len(scored), limit)
+        for _, _, product in scored[:limit]:
+            enriched = dict(product)
+            enriched["_strict_match_count"] = strict_match_count
+            results.append(enriched)
         return results
 
     def _build_priority_profile(self, state: SessionState) -> dict[str, int]:
@@ -161,7 +155,7 @@ class RecommendationService:
             "discount": 8,
         }
 
-    def _apply_priority_prefilters(
+    async def _apply_priority_prefilters(
         self,
         candidates: list[dict[str, Any]],
         state: SessionState,
@@ -204,6 +198,24 @@ class RecommendationService:
             ]
             if by_material:
                 filtered = by_material
+
+        if state.color_preferences:
+            by_text_color = [
+                product
+                for product in filtered
+                if self._matches_color_preferences(product, state.color_preferences)
+            ]
+            if by_text_color:
+                filtered = by_text_color
+            else:
+                if self.color_inference_service is not None:
+                    await self.color_inference_service.annotate_products(filtered)
+                by_image_color = [
+                    product
+                    for product in filtered
+                    if self._matches_color_preferences(product, state.color_preferences)
+                ]
+                filtered = by_image_color
 
         if state.luxury_intent:
             by_luxury = [
@@ -359,6 +371,9 @@ class RecommendationService:
             if style in attributes or style in selling_points:
                 score += profile["style"]
 
+        if state.color_preferences and self._matches_color_preferences(product, state.color_preferences):
+            score += 24
+
         if state.main_material:
             expanded_main_keywords = self._expand_material_keywords(state.main_material)
             if any(keyword in main_material for keyword in expanded_main_keywords):
@@ -431,6 +446,34 @@ class RecommendationService:
             ]
         )
         return any(keyword in haystack for keyword in expanded_keywords)
+
+    def _matches_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
+        haystack = " ".join(
+            [
+                product.get("product_name") or "",
+                product.get("main_material") or "",
+                product.get("stone_material") or "",
+                product.get("system_attributes") or "",
+                product.get("selling_points") or "",
+                " ".join(product.get("_inferred_colors") or []),
+            ]
+        )
+        color_aliases = {
+            "蓝色": ["蓝", "蓝色", "海蓝", "天蓝", "宝蓝", "蓝调", "蓝宝", "蓝水"],
+            "绿色": ["绿", "绿色", "青绿", "翠绿", "墨绿"],
+            "红色": ["红", "红色", "酒红", "玫红", "朱红"],
+            "粉色": ["粉", "粉色", "樱花粉", "少女粉"],
+            "紫色": ["紫", "紫色", "薰衣草紫"],
+            "白色": ["白", "白色", "奶白", "米白"],
+            "黑色": ["黑", "黑色", "曜黑"],
+            "金色": ["金", "金色", "香槟金"],
+            "银色": ["银", "银色"],
+        }
+        for color in colors:
+            variants = color_aliases.get(color, [color])
+            if any(variant in haystack for variant in variants):
+                return True
+        return False
 
     def _expand_material_keywords(self, keywords: list[str]) -> list[str]:
         expanded: list[str] = []

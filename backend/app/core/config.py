@@ -12,12 +12,16 @@ class Settings(BaseSettings):
 
     longcat_api_url: str = "https://api.longcat.chat/openai/v1/chat/completions"
     longcat_model: str = "LongCat-Flash-Chat"
+    longcat_vision_model: str = ""
     longcat_api_key: str = ""
 
     product_json_path: str = ""
     product_xlsx_path: str = ""
     default_budget_tolerance: float = 0.15
     expanded_budget_tolerance: float = 0.20
+    product_color_cache_path: str = ""
+    product_color_inference_limit: int = 24
+    product_color_inference_concurrency: int = 4
     cors_allowed_origins: str = ""
 
     model_config = SettingsConfigDict(
@@ -44,6 +48,17 @@ class Settings(BaseSettings):
         if not raw:
             return []
         return [item.strip() for item in raw.split(",") if item.strip()]
+
+    @property
+    def effective_vision_model(self) -> str:
+        return (self.longcat_vision_model or self.longcat_model).strip()
+
+    @property
+    def resolved_product_color_cache_path(self) -> Path:
+        raw = self.product_color_cache_path.strip()
+        if raw:
+            return Path(raw)
+        return self.backend_root / "data" / "product_color_cache.json"
 
 
 @lru_cache(maxsize=1)

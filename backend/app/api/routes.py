@@ -19,6 +19,7 @@ from app.schemas.mapping import (
 from app.services.condition_parser import ConditionParser
 from app.services.dialogue_service import DialogueService
 from app.services.longcat_client import LongCatClient
+from app.services.product_color_inference_service import ProductColorInferenceService
 from app.services.recommendation_service import RecommendationService
 
 
@@ -85,7 +86,12 @@ def get_dialogue_service(
     if _dialogue_service is None:
         longcat_client = LongCatClient(settings)
         condition_parser = ConditionParser(longcat_client, mapping_repository=mapping_repository)
-        recommendation_service = RecommendationService(settings, product_repository)
+        color_inference_service = ProductColorInferenceService(settings, longcat_client)
+        recommendation_service = RecommendationService(
+            settings,
+            product_repository,
+            color_inference_service=color_inference_service,
+        )
         _dialogue_service = DialogueService(
             condition_parser=condition_parser,
             recommendation_service=recommendation_service,

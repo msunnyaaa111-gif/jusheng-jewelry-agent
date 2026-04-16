@@ -7,6 +7,24 @@ from app.services.longcat_client import LongCatClient
 
 
 class LongCatClientPayloadTests(unittest.TestCase):
+    def test_build_timeout_uses_split_timeout_settings(self) -> None:
+        settings = Settings(
+            longcat_api_key="test-key",
+            longcat_model="LongCat-Flash-Omni-2603",
+            longcat_connect_timeout_seconds=12.0,
+            longcat_read_timeout_seconds=88.0,
+            longcat_write_timeout_seconds=21.0,
+            longcat_pool_timeout_seconds=9.0,
+        )
+        client = LongCatClient(settings)
+
+        timeout = client._build_timeout()
+
+        self.assertEqual(timeout.connect, 12.0)
+        self.assertEqual(timeout.read, 88.0)
+        self.assertEqual(timeout.write, 21.0)
+        self.assertEqual(timeout.pool, 9.0)
+
     def test_flash_chat_uses_string_message_format(self) -> None:
         settings = Settings(
             longcat_api_key="test-key",

@@ -20,8 +20,16 @@ class LongCatClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=45.0)
+            self._client = httpx.AsyncClient(timeout=self._build_timeout())
         return self._client
+
+    def _build_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=self.settings.longcat_connect_timeout_seconds,
+            read=self.settings.longcat_read_timeout_seconds,
+            write=self.settings.longcat_write_timeout_seconds,
+            pool=self.settings.longcat_pool_timeout_seconds,
+        )
 
     async def chat_completion(
         self,

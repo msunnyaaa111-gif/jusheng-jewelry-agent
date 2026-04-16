@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     longcat_model: str = "LongCat-Flash-Chat"
     longcat_vision_model: str = ""
     longcat_api_key: str = ""
+    longcat_connect_timeout_seconds: float = 10.0
+    longcat_read_timeout_seconds: float = 75.0
+    longcat_write_timeout_seconds: float = 30.0
+    longcat_pool_timeout_seconds: float = 30.0
 
     product_json_path: str = ""
     product_xlsx_path: str = ""

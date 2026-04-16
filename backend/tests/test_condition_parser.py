@@ -79,6 +79,54 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
         self.assertFalse(result["needs_followup"])
 
+    def test_detect_more_options_request_with_short_particle_phrase(self) -> None:
+        state = SessionState(
+            budget=400.0,
+            category=["手链"],
+            color_preferences=["紫色"],
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="还有其他的嘛？",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_detect_stateful_rerank_for_unlisted_short_followup(self) -> None:
+        state = SessionState(
+            budget=400.0,
+            category=["手链"],
+            color_preferences=["紫色"],
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="那再来点别的吧",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_changed_budget_should_refresh_instead_of_rerank(self) -> None:
+        state = SessionState(
+            budget=400.0,
+            category=["手链"],
+            color_preferences=["紫色"],
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="我现在预算一千五，再给我推荐几款",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertTrue(result["should_refresh_retrieval"])
+
     def test_extract_color_and_budget_from_precise_request(self) -> None:
         conditions = self.parser.extract_explicit_conditions("我想要蓝色的项链，预算500元")
 

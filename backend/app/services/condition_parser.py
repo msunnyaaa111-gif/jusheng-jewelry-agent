@@ -404,10 +404,10 @@ class ConditionParser:
             action = "GREETING"
             intent = "greeting"
             needs_followup = True
-        elif (
-            session_state.has_meaningful_conditions()
-            and self._is_more_options_request(text)
-            and not refresh
+        elif self._should_rerank_from_context(
+            text=text,
+            session_state=session_state,
+            refresh=refresh,
         ):
             action = "RERANK_AND_RECOMMEND"
             intent = "ask_more_options"
@@ -444,6 +444,16 @@ class ConditionParser:
 
     def _is_more_options_request(self, text: str) -> bool:
         direct_patterns = (
+            "还有其他的吗",
+            "还有其他的嘛",
+            "还有其他的么",
+            "还有其他的呢",
+            "还有别的吗",
+            "还有别的嘛",
+            "还有别的么",
+            "还有别的呢",
+            "有没有其他的",
+            "有没有别的",
             "其他款式",
             "其他的款式",
             "其他款",
@@ -526,6 +536,9 @@ class ConditionParser:
             "有没有其他",
         )
 
+        if re.search(r"(还有|有没有).*(其他|别的).*(吗|嘛|么|呢|没)\??？?$", text):
+            return True
+
         if any(pattern in text for pattern in availability_patterns) and any(
             item in text for item in rerank_objects
         ):
@@ -537,6 +550,80 @@ class ConditionParser:
             return True
 
         return False
+
+    def _should_rerank_from_context(
+        self,
+        *,
+        text: str,
+        session_state: SessionState,
+        refresh: bool,
+    ) -> bool:
+        if not session_state.has_meaningful_conditions():
+            return False
+
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+        if self._is_more_options_request(normalized):
+            return not refresh
+        if refresh:
+            return False
+        if not session_state.last_recommended_codes:
+            return False
+
+        if self._is_more_options_request(normalized):
+            return True
+        if self._is_result_detail_followup(normalized):
+            return False
+        if self._is_short_confirmation(normalized):
+            return False
+
+        # Short, low-information follow-ups after a recommendation should default
+        # to rerank rather than replaying the same result set.
+        if len(normalized) <= 14 and any(
+            marker in normalized
+            for marker in (
+                "再来",
+                "再给我",
+                "再看看",
+                "再看",
+                "换",
+                "还有",
+                "别的",
+                "其他",
+                "另外",
+            )
+        ):
+            return True
+
+        if len(normalized) <= 10 and normalized.endswith(("吗", "嘛", "么", "呢", "吧")):
+            return True
+
+        return False
+
+    def _is_result_detail_followup(self, text: str) -> bool:
+        detail_markers = (
+            "哪个好",
+            "哪款",
+            "哪个更",
+            "区别",
+            "差别",
+            "对比",
+            "怎么选",
+            "推荐哪个",
+            "为什么",
+            "为啥",
+            "什么意思",
+            "怎么样",
+            "好不好",
+            "值不值",
+            "适合我吗",
+            "适合送吗",
+        )
+        return any(marker in text for marker in detail_markers)
+
+    def _is_short_confirmation(self, text: str) -> bool:
+        return text.lower() in {"好", "好的", "可以", "行", "嗯", "嗯嗯", "要", "不要", "不用", "ok", "okay"}
 
     def _merge_llm_result(self, heuristic: dict[str, Any], llm_result: dict[str, Any]) -> dict[str, Any]:
         merged = heuristic.copy()

@@ -158,5 +158,59 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertIn("预算", result["followup_question"])
 
 
+    def test_extract_budget_unrestricted_and_yellow_color(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("我想看黄色手串，预算都可以")
+
+        self.assertEqual(conditions["category"], ["手链"])
+        self.assertEqual(conditions["color_preferences"], ["榛勮壊"])
+        self.assertTrue(conditions["budget_unrestricted"])
+
+    def test_extract_negative_style_and_positive_style(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("我不喜欢新中式，喜欢时尚点的")
+
+        self.assertEqual(conditions["excluded_style_preferences"], ["新中式"])
+        self.assertEqual(conditions["style_preferences"], ["时尚"])
+
+    def test_extract_negative_material_preference(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("我不喜欢和田玉")
+
+        self.assertEqual(conditions["main_material"], [])
+        self.assertEqual(conditions["excluded_main_material"], ["和田玉"])
+
+    def test_budget_unrestricted_allows_recommendation_without_numeric_budget(self) -> None:
+        state = SessionState(category=["手链"], color_preferences=["黄色"])
+
+        result = self.parser._heuristic_parse(
+            message="预算都可以",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+
+    def test_extract_feature_preference_and_negative_feature(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("我不喜欢大颗粒，想要小颗粒一点")
+
+        self.assertEqual(conditions["excluded_feature_preferences"], ["大颗粒"])
+        self.assertEqual(conditions["feature_preferences"], ["小颗粒"])
+
+    def test_feature_adjustment_should_refresh_instead_of_rerank(self) -> None:
+        state = SessionState(
+            budget=500.0,
+            category=["鎵嬮摼"],
+            gift_target="鑷埓",
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="我不要太成熟的，想年轻一点",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertTrue(result["should_refresh_retrieval"])
+        self.assertIn("成熟", result["conditions"]["excluded_preferences"])
+
 if __name__ == "__main__":
     unittest.main()

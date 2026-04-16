@@ -189,7 +189,11 @@ class DialogueService:
         self.histories.setdefault(session_id, []).append({"role": role, "content": content})
         self.histories[session_id] = self.histories[session_id][-12:]
 
-    async def handle_message(self, *, session_id: str, text: str, response_mode: str = "text") -> dict[str, Any]:
+    def _normalize_response_mode(self, response_mode: str | None) -> str:
+        return "text" if str(response_mode or "").strip().lower() == "text" else "cards"
+
+    async def handle_message(self, *, session_id: str, text: str, response_mode: str = "cards") -> dict[str, Any]:
+        response_mode = self._normalize_response_mode(response_mode)
         turn = await self._prepare_turn(session_id=session_id, text=text)
         products = turn["recommended_products"]
         reply_source = "cards" if response_mode == "cards" else None
@@ -219,8 +223,9 @@ class DialogueService:
             state=turn["state"],
         )
 
-    async def stream_message(self, *, session_id: str, text: str, response_mode: str = "text"):
+    async def stream_message(self, *, session_id: str, text: str, response_mode: str = "cards"):
         yield {"type": "status", "text": "正在理解您的需求，马上开始整理回复..."}
+        response_mode = self._normalize_response_mode(response_mode)
         turn = await self._prepare_turn(session_id=session_id, text=text)
         action = turn["action"]
         state = turn["state"]
@@ -736,8 +741,13 @@ class DialogueService:
                 "excluded_categories",
                 "main_material",
                 "stone_material",
+                "excluded_main_material",
+                "excluded_stone_material",
                 "color_preferences",
+                "feature_preferences",
+                "excluded_feature_preferences",
                 "style_preferences",
+                "excluded_style_preferences",
                 "luxury_intent",
                 "image_features",
                 "excluded_preferences",
@@ -763,10 +773,80 @@ class DialogueService:
                 item for item in state.excluded_categories if item not in categories
             ]
 
+        excluded_main_material = conditions.get("excluded_main_material") or []
+        if excluded_main_material:
+            merged_excluded = list(state.excluded_main_material)
+            for item in excluded_main_material:
+                if item not in merged_excluded:
+                    merged_excluded.append(item)
+            state.excluded_main_material = merged_excluded
+            if state.main_material:
+                state.main_material = [item for item in state.main_material if item not in excluded_main_material]
+
+        excluded_stone_material = conditions.get("excluded_stone_material") or []
+        if excluded_stone_material:
+            merged_excluded = list(state.excluded_stone_material)
+            for item in excluded_stone_material:
+                if item not in merged_excluded:
+                    merged_excluded.append(item)
+            state.excluded_stone_material = merged_excluded
+            if state.stone_material:
+                state.stone_material = [item for item in state.stone_material if item not in excluded_stone_material]
+
+        excluded_style_preferences = conditions.get("excluded_style_preferences") or []
+        if excluded_style_preferences:
+            merged_excluded = list(state.excluded_style_preferences)
+            for item in excluded_style_preferences:
+                if item not in merged_excluded:
+                    merged_excluded.append(item)
+            state.excluded_style_preferences = merged_excluded
+            if state.style_preferences:
+                state.style_preferences = [item for item in state.style_preferences if item not in excluded_style_preferences]
+
+        main_materials = conditions.get("main_material") or []
+        if main_materials and state.excluded_main_material:
+            state.excluded_main_material = [
+                item for item in state.excluded_main_material if item not in main_materials
+            ]
+
+        stone_materials = conditions.get("stone_material") or []
+        if stone_materials and state.excluded_stone_material:
+            state.excluded_stone_material = [
+                item for item in state.excluded_stone_material if item not in stone_materials
+            ]
+
+        style_preferences = conditions.get("style_preferences") or []
+        if style_preferences and state.excluded_style_preferences:
+            state.excluded_style_preferences = [
+                item for item in state.excluded_style_preferences if item not in style_preferences
+            ]
+
+        excluded_feature_preferences = conditions.get("excluded_feature_preferences") or []
+        if excluded_feature_preferences:
+            merged_excluded = list(state.excluded_feature_preferences)
+            for item in excluded_feature_preferences:
+                if item not in merged_excluded:
+                    merged_excluded.append(item)
+            state.excluded_feature_preferences = merged_excluded
+            if state.feature_preferences:
+                state.feature_preferences = [item for item in state.feature_preferences if item not in excluded_feature_preferences]
+
+        feature_preferences = conditions.get("feature_preferences") or []
+        if feature_preferences and state.excluded_feature_preferences:
+            state.excluded_feature_preferences = [
+                item for item in state.excluded_feature_preferences if item not in feature_preferences
+            ]
+
         for field, value in conditions.items():
             if value in (None, "", []):
                 continue
-            if field == "excluded_categories":
+            if field in {
+                "excluded_categories",
+                "excluded_main_material",
+                "excluded_stone_material",
+                "excluded_feature_preferences",
+                "excluded_style_preferences",
+            }:
                 continue
             current = getattr(state, field, None)
             if isinstance(current, list):

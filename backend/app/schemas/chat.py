@@ -10,7 +10,7 @@ class ChatRequest(BaseModel):
     user_id: str | None = Field(default=None, description="Optional user identifier.")
     text: str = Field(default="", description="User text input.")
     image_urls: list[str] = Field(default_factory=list, description="Image URL list, optional.")
-    response_mode: str = Field(default="text", description="Response rendering mode, such as text or cards.")
+    response_mode: str = Field(default="cards", description="Response rendering mode, such as text or cards.")
 
 
 class RecommendedProduct(BaseModel):

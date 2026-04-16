@@ -1,4 +1,4 @@
-import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
+﻿import { FormEvent, startTransition, useEffect, useRef, useState } from "react";
 
 type RecommendedProduct = {
   product_code: string;

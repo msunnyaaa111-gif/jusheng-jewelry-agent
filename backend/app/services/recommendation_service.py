@@ -79,13 +79,19 @@ class RecommendationService:
         payload = {
             "age": state.age,
             "budget": state.budget,
+            "budget_unrestricted": state.budget_unrestricted,
             "category": state.category,
             "excluded_categories": state.excluded_categories,
             "main_material": state.main_material,
             "stone_material": state.stone_material,
+            "excluded_main_material": state.excluded_main_material,
+            "excluded_stone_material": state.excluded_stone_material,
             "color_preferences": state.color_preferences,
+            "feature_preferences": state.feature_preferences,
+            "excluded_feature_preferences": state.excluded_feature_preferences,
             "gift_target": state.gift_target,
             "style_preferences": state.style_preferences,
+            "excluded_style_preferences": state.excluded_style_preferences,
             "luxury_intent": state.luxury_intent,
             "constellation": state.constellation,
             "zodiac": state.zodiac,
@@ -200,22 +206,31 @@ class RecommendationService:
                 filtered = by_material
 
         if state.color_preferences:
-            by_text_color = [
+            if self.color_inference_service is not None:
+                await self.color_inference_service.annotate_products(filtered)
+            filtered = [
                 product
                 for product in filtered
-                if self._matches_color_preferences(product, state.color_preferences)
+                if self._matches_primary_color_preferences(product, state.color_preferences)
             ]
-            if by_text_color:
-                filtered = by_text_color
-            else:
-                if self.color_inference_service is not None:
-                    await self.color_inference_service.annotate_products(filtered)
-                by_image_color = [
-                    product
-                    for product in filtered
-                    if self._matches_color_preferences(product, state.color_preferences)
-                ]
-                filtered = by_image_color
+
+        if state.style_preferences:
+            by_style = [
+                product
+                for product in filtered
+                if self._matches_style_preferences(product, state.style_preferences)
+            ]
+            if by_style:
+                filtered = by_style
+
+        if state.feature_preferences:
+            by_feature = [
+                product
+                for product in filtered
+                if self._matches_feature_preferences(product, state.feature_preferences)
+            ]
+            if by_feature:
+                filtered = by_feature
 
         if state.luxury_intent:
             by_luxury = [
@@ -247,6 +262,18 @@ class RecommendationService:
             for style in rule.get("style_preferences", []):
                 if style not in preferences["style_preferences"]:
                     preferences["style_preferences"].append(style)
+        if state.excluded_main_material:
+            preferences["main_material"] = [
+                item for item in preferences["main_material"] if item not in state.excluded_main_material
+            ]
+        if state.excluded_stone_material:
+            preferences["stone_material"] = [
+                item for item in preferences["stone_material"] if item not in state.excluded_stone_material
+            ]
+        if state.excluded_style_preferences:
+            preferences["style_preferences"] = [
+                item for item in preferences["style_preferences"] if item not in state.excluded_style_preferences
+            ]
         return preferences
 
     def _filter_products(
@@ -286,9 +313,28 @@ class RecommendationService:
                 if not self._matches_material_keywords(product, state.stone_material):
                     continue
 
+            if state.excluded_main_material and self._matches_material_keywords(product, state.excluded_main_material):
+                continue
+
+            if state.excluded_stone_material and self._matches_material_keywords(product, state.excluded_stone_material):
+                continue
+
+            if state.excluded_style_preferences and self._matches_style_preferences(
+                product,
+                state.excluded_style_preferences,
+            ):
+                continue
+
+            if state.excluded_feature_preferences and self._matches_feature_preferences(
+                product,
+                state.excluded_feature_preferences,
+            ):
+                continue
+
             if state.excluded_preferences:
                 text = " ".join(
                     [
+                        product.get("product_name") or "",
                         product.get("system_attributes") or "",
                         product.get("selling_points") or "",
                         product.get("main_material") or "",
@@ -367,11 +413,13 @@ class RecommendationService:
         if state.premium_upgrade_intent:
             score += self._score_premium_upgrade(product, state)
 
-        for style in state.style_preferences:
-            if style in attributes or style in selling_points:
-                score += profile["style"]
+        if state.style_preferences and self._matches_style_preferences(product, state.style_preferences):
+            score += profile["style"]
 
-        if state.color_preferences and self._matches_color_preferences(product, state.color_preferences):
+        if state.feature_preferences and self._matches_feature_preferences(product, state.feature_preferences):
+            score += max(profile["style"] - 4, 10)
+
+        if state.color_preferences and self._matches_primary_color_preferences(product, state.color_preferences):
             score += 24
 
         if state.main_material:
@@ -396,9 +444,11 @@ class RecommendationService:
         ):
             score += 6
 
-        for style in symbol_preferences["style_preferences"]:
-            if style in attributes or style in selling_points:
-                score += 6
+        if symbol_preferences["style_preferences"] and self._matches_style_preferences(
+            product,
+            symbol_preferences["style_preferences"],
+        ):
+            score += 6
 
         if product.get("discount") is not None:
             score += profile["discount"]
@@ -446,6 +496,66 @@ class RecommendationService:
             ]
         )
         return any(keyword in haystack for keyword in expanded_keywords)
+
+    def _matches_style_preferences(self, product: dict[str, Any], styles: list[str]) -> bool:
+        return self._matches_text_preferences(product, styles)
+
+    def _matches_feature_preferences(self, product: dict[str, Any], features: list[str]) -> bool:
+        return self._matches_text_preferences(product, features)
+
+    def _matches_text_preferences(self, product: dict[str, Any], preferences: list[str]) -> bool:
+        haystack = " ".join(
+            [
+                product.get("product_name") or "",
+                product.get("system_category") or "",
+                product.get("system_attributes") or "",
+                product.get("selling_points") or "",
+                product.get("luxury_flag") or "",
+                product.get("suitable_people") or "",
+                product.get("main_material") or "",
+                product.get("stone_material") or "",
+            ]
+        )
+        return any(preference and preference in haystack for preference in preferences)
+
+    def _matches_primary_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
+        color_aliases = {
+            "钃濊壊": ["钃?", "钃濊壊", "娴疯摑", "澶╄摑", "瀹濊摑", "钃濊皟", "钃濆疂", "钃濇按"],
+            "缁胯壊": ["缁?", "缁胯壊", "闈掔豢", "缈犵豢", "澧ㄧ豢"],
+            "绾㈣壊": ["绾?", "绾㈣壊", "閰掔孩", "鐜孩", "鏈辩孩"],
+            "绮夎壊": ["绮?", "绮夎壊", "妯辫姳绮?", "灏戝コ绮?"],
+            "绱壊": ["绱?", "绱壊", "钖拌。鑽夌传"],
+            "鐧借壊": ["鐧?", "鐧借壊", "濂剁櫧", "绫崇櫧"],
+            "榛戣壊": ["榛?", "榛戣壊", "鏇滈粦"],
+            "閲戣壊": ["閲?", "閲戣壊", "棣欐閲?"],
+            "閾惰壊": ["閾?", "閾惰壊"],
+            "榛勮壊": ["榛?", "榛勮壊", "黄色", "鹅黄", "奶黄"],
+            "姗欒壊": ["姗?", "姗欒壊", "橘色", "橙色", "橙黄"],
+            "妫曡壊": ["妫?", "妫曡壊", "咖色", "咖啡色", "棕色"],
+        }
+        inferred_colors = [str(item).strip() for item in (product.get("_inferred_colors") or []) if str(item).strip()]
+        if inferred_colors:
+            primary_color = inferred_colors[0]
+            for color in colors:
+                variants = color_aliases.get(color, [color])
+                if primary_color in variants or primary_color == color:
+                    return True
+            return False
+
+        text_haystack = " ".join(
+            [
+                product.get("product_name") or "",
+                product.get("main_material") or "",
+                product.get("stone_material") or "",
+                product.get("system_attributes") or "",
+                product.get("selling_points") or "",
+            ]
+        )
+        for color in colors:
+            variants = color_aliases.get(color, [color])
+            if any(variant in text_haystack for variant in variants):
+                return True
+        return False
 
     def _matches_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
         text_haystack = " ".join(

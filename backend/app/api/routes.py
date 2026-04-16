@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,7 @@ from app.services.recommendation_service import RecommendationService
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _dialogue_service: DialogueService | None = None
 _product_repository: ProductRepository | None = None
@@ -146,12 +148,26 @@ async def chat_stream(
         raise HTTPException(status_code=400, detail="text 和 image_urls 不能同时为空。")
 
     async def event_generator():
-        async for event in dialogue_service.stream_message(
+        try:
+            async for event in dialogue_service.stream_message(
             session_id=request.session_id,
             text=request.text.strip() or "用户上传了图片",
             response_mode=request.response_mode,
         ):
-            yield _format_sse(event["type"], event.get("response") or {"text": event.get("text", "")})
+                yield _format_sse(event["type"], event.get("response") or {"text": event.get("text", "")})
+        except Exception:
+            logger.exception("Streaming chat response failed", extra={"session_id": request.session_id})
+            fallback_response = ChatResponse(
+                session_id=request.session_id,
+                action="GENERAL_REPLY",
+                reply_text="这一轮生成中途出现了异常，商品卡片没有完整返回。您可以直接再发一次，我会按最新条件继续为您整理。",
+                reply_source="stream_fallback",
+                purchase_advice=None,
+                followup_question=None,
+                recommended_products=[],
+                session_state=dialogue_service.get_session_state(request.session_id),
+            )
+            yield _format_sse("done", fallback_response.model_dump())
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

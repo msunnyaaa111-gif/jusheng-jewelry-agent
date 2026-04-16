@@ -13,6 +13,7 @@ from app.services.longcat_client import LongCatClient
 
 
 logger = logging.getLogger(__name__)
+COLOR_CACHE_VERSION = 2
 
 
 COLOR_INFERENCE_SYSTEM_PROMPT = """
@@ -71,7 +72,7 @@ class ProductColorInferenceService:
 
         await self._ensure_cache_loaded()
         cached = self._cache.get(cache_key)
-        if cached and cached.get("media_ref") == media_ref:
+        if cached and cached.get("media_ref") == media_ref and cached.get("version") == COLOR_CACHE_VERSION:
             colors = self._normalize_colors(cached.get("colors"))
             product["_inferred_colors"] = colors
             return colors
@@ -141,6 +142,7 @@ class ProductColorInferenceService:
         async with self._cache_lock:
             self._cache[cache_key] = {
                 "media_ref": media_ref,
+                "version": COLOR_CACHE_VERSION,
                 "colors": colors,
             }
             cache_path = self.settings.resolved_product_color_cache_path

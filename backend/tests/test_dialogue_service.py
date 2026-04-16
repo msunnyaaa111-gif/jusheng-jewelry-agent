@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
@@ -109,6 +109,26 @@ class FakeRecommendationService:
 
 
 class DialogueServiceRerankTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_message_defaults_to_cards_for_recommendations(self) -> None:
+        recommendation_service = FakeRecommendationService()
+        service = DialogueService(
+            condition_parser=FakeConditionParser(),
+            recommendation_service=recommendation_service,
+            longcat_client=SimpleNamespace(settings=SimpleNamespace(llm_enabled=False)),
+        )
+
+        result = await service.handle_message(
+            session_id="cards-default-session",
+            text="500 bracelet self",
+        )
+
+        self.assertEqual(result["reply_text"], "")
+        self.assertEqual(result["reply_source"], "cards")
+        self.assertEqual(
+            [item.product_code for item in result["recommended_products"]],
+            ["A001", "A002", "A003"],
+        )
+
     async def test_rerank_excludes_already_seen_products(self) -> None:
         recommendation_service = FakeRecommendationService()
         service = DialogueService(

@@ -121,6 +121,27 @@ STYLE_KEYWORDS = [
     "通透",
 ]
 
+FEATURE_KEYWORDS = [
+    "大颗粒",
+    "小颗粒",
+    "圆珠",
+    "桶珠",
+    "多圈",
+    "单圈",
+    "太夸张",
+    "低调",
+    "成熟",
+    "老气",
+    "年轻",
+    "少女感",
+    "网红感",
+    "花哨",
+    "复杂",
+    "厚重",
+    "轻盈",
+    "秀气",
+]
+
 COLOR_KEYWORDS = {
     "蓝色": ["蓝色", "蓝", "海蓝", "天蓝", "宝蓝", "蓝调", "蓝宝", "蓝水"],
     "绿色": ["绿色", "绿", "翠绿", "青绿", "墨绿"],
@@ -245,17 +266,24 @@ class ConditionParser:
         direct_signal_count = sum(
             [
                 1 if conditions.get("budget") is not None else 0,
+                1 if conditions.get("budget_unrestricted") is True else 0,
                 1 if conditions.get("category") else 0,
                 1 if conditions.get("excluded_categories") else 0,
                 1 if conditions.get("main_material") else 0,
                 1 if conditions.get("stone_material") else 0,
+                1 if conditions.get("excluded_main_material") else 0,
+                1 if conditions.get("excluded_stone_material") else 0,
                 1 if conditions.get("color_preferences") else 0,
+                1 if conditions.get("feature_preferences") else 0,
+                1 if conditions.get("excluded_feature_preferences") else 0,
                 1 if conditions.get("gift_target") is not None else 0,
                 1 if conditions.get("style_preferences") else 0,
+                1 if conditions.get("excluded_style_preferences") else 0,
                 1 if conditions.get("luxury_intent") else 0,
                 1 if conditions.get("constellation") is not None else 0,
                 1 if conditions.get("zodiac") is not None else 0,
                 1 if conditions.get("birthday") is not None else 0,
+                1 if conditions.get("excluded_preferences") else 0,
             ]
         )
 
@@ -280,8 +308,13 @@ class ConditionParser:
             "excluded_categories",
             "main_material",
             "stone_material",
+            "excluded_main_material",
+            "excluded_stone_material",
             "color_preferences",
+            "feature_preferences",
+            "excluded_feature_preferences",
             "style_preferences",
+            "excluded_style_preferences",
             "luxury_intent",
             "image_features",
             "excluded_preferences",
@@ -297,6 +330,10 @@ class ConditionParser:
             value = conditions.get(scalar_field)
             if isinstance(value, str):
                 conditions[scalar_field] = self._canonicalize_condition(scalar_field, value)
+
+        budget_unrestricted = conditions.get("budget_unrestricted")
+        if not isinstance(budget_unrestricted, bool):
+            conditions["budget_unrestricted"] = None
 
         normalized["conditions"] = conditions
 
@@ -328,7 +365,7 @@ class ConditionParser:
                     return target
             return text
 
-        if field in {"luxury_intent", "style_preferences", "main_material", "stone_material"}:
+        if field in {"luxury_intent", "style_preferences", "feature_preferences", "main_material", "stone_material"}:
             phrase_map = self._learned_phrase_map(field)
             if text in phrase_map:
                 return phrase_map[text]
@@ -339,18 +376,55 @@ class ConditionParser:
         text = self._normalize_text(message)
         budget = self._extract_budget(text)
         budget_flexibility = self._extract_budget_flexibility(text)
+        budget_unrestricted = self._extract_budget_unrestricted(text)
+        if budget is not None:
+            budget_unrestricted = False
+
+        excluded_main_material = self._extract_negated_mapped_terms(text, MAIN_MATERIAL_KEYWORDS, "main_material")
+        excluded_stone_material = self._extract_negated_mapped_terms(text, STONE_MATERIAL_KEYWORDS, "stone_material")
+        excluded_feature_preferences = self._extract_negated_mapped_terms(text, FEATURE_KEYWORDS, "feature_preferences")
+        excluded_style_preferences = self._extract_negated_mapped_terms(text, STYLE_KEYWORDS, "style_preferences")
+
+        main_material = [
+            item for item in self._extract_main_materials(text)
+            if item not in excluded_main_material
+            and item not in excluded_stone_material
+            and not any(item in excluded or excluded in item for excluded in [*excluded_main_material, *excluded_stone_material])
+        ]
+        stone_material = [
+            item for item in self._extract_stone_materials(text)
+            if item not in excluded_stone_material
+            and item not in excluded_main_material
+            and not any(item in excluded or excluded in item for excluded in [*excluded_main_material, *excluded_stone_material])
+        ]
+        style_preferences = [
+            item for item in self._extract_style_preferences(text)
+            if item not in excluded_style_preferences
+            and not any(item in excluded or excluded in item for excluded in excluded_style_preferences)
+        ]
+        feature_preferences = [
+            item for item in self._extract_feature_preferences(text)
+            if item not in excluded_feature_preferences
+            and not any(item in excluded or excluded in item for excluded in excluded_feature_preferences)
+        ]
         return {
             "age": self._extract_age(text),
             "budget": budget,
             "budget_flexibility": budget_flexibility,
+            "budget_unrestricted": budget_unrestricted,
             "category": self._extract_categories(text),
             "excluded_categories": self._extract_negated_categories(text),
-            "main_material": self._extract_main_materials(text),
-            "stone_material": self._extract_stone_materials(text),
+            "main_material": main_material,
+            "stone_material": stone_material,
+            "excluded_main_material": excluded_main_material,
+            "excluded_stone_material": excluded_stone_material,
             "color_preferences": self._extract_color_preferences(text),
+            "feature_preferences": feature_preferences,
             "gift_target": self._extract_gift_target(text),
             "usage_scene": None,
-            "style_preferences": self._extract_style_preferences(text),
+            "style_preferences": style_preferences,
+            "excluded_feature_preferences": excluded_feature_preferences,
+            "excluded_style_preferences": excluded_style_preferences,
             "luxury_intent": self._extract_luxury_intent(text),
             "constellation": self._extract_constellation(text),
             "zodiac": self._extract_zodiac(text),
@@ -366,13 +440,19 @@ class ConditionParser:
             [
                 conditions["age"] is not None,
                 conditions["budget"] is not None,
+                conditions.get("budget_unrestricted") is True,
                 conditions["category"],
                 conditions["excluded_categories"],
                 conditions["main_material"],
                 conditions["stone_material"],
+                conditions["excluded_main_material"],
+                conditions["excluded_stone_material"],
                 conditions["color_preferences"],
+                conditions["feature_preferences"],
+                conditions["excluded_feature_preferences"],
                 conditions["gift_target"] is not None,
                 conditions["style_preferences"],
+                conditions["excluded_style_preferences"],
                 conditions["luxury_intent"],
                 conditions["constellation"] is not None,
                 conditions["zodiac"] is not None,
@@ -388,14 +468,23 @@ class ConditionParser:
             in {
                 "age",
                 "budget",
+                "budget_unrestricted",
                 "category",
                 "main_material",
                 "stone_material",
+                "excluded_main_material",
+                "excluded_stone_material",
                 "color_preferences",
+                "feature_preferences",
+                "excluded_feature_preferences",
                 "gift_target",
+                "style_preferences",
+                "excluded_style_preferences",
+                "luxury_intent",
                 "constellation",
                 "zodiac",
                 "birthday",
+                "excluded_preferences",
             }
             for change in changes
         )
@@ -573,6 +662,8 @@ class ConditionParser:
 
         if self._is_more_options_request(normalized):
             return True
+        if self._looks_like_condition_adjustment(normalized):
+            return False
         if self._is_result_detail_followup(normalized):
             return False
         if self._is_short_confirmation(normalized):
@@ -600,6 +691,26 @@ class ConditionParser:
             return True
 
         return False
+
+    def _looks_like_condition_adjustment(self, text: str) -> bool:
+        adjustment_markers = (
+            "换成",
+            "改成",
+            "不要",
+            "不喜欢",
+            "不想要",
+            "不想看",
+            "不考虑",
+            "喜欢",
+            "想要",
+            "想看",
+            "偏向",
+            "偏爱",
+            "更喜欢",
+            "要年轻一点",
+            "要低调一点",
+        )
+        return any(marker in text for marker in adjustment_markers)
 
     def _is_result_detail_followup(self, text: str) -> bool:
         detail_markers = (
@@ -741,6 +852,29 @@ class ConditionParser:
                 return flexibility
         return None
 
+    def _extract_budget_unrestricted(self, text: str) -> bool | None:
+        unrestricted_phrases = (
+            "预算随便",
+            "预算都可以",
+            "预算都行",
+            "预算不限",
+            "预算不限制",
+            "不限制预算",
+            "预算无所谓",
+            "价位都可以",
+            "价位不限",
+            "价格都可以",
+            "价格不限",
+            "预算看款式",
+        )
+        if any(phrase in text for phrase in unrestricted_phrases):
+            return True
+        if re.search(r"预算.*(?:随便|不限|都可以|都行|无所谓)", text):
+            return True
+        if re.search(r"(?:价位|价格).*(?:随便|不限|都可以|都行|无所谓)", text):
+            return True
+        return None
+
     def _parse_budget_token(self, raw_token: str) -> tuple[float | None, float | None]:
         token = str(raw_token or "").strip()
         token = token.replace("人民币", "").replace("预算", "").replace("块钱", "").replace("块", "").replace("元", "")
@@ -879,12 +1013,25 @@ class ConditionParser:
     def _extract_stone_materials(self, text: str) -> list[str]:
         return self._extract_mapped_terms(text, STONE_MATERIAL_KEYWORDS, "stone_material")
 
+    def _extract_feature_preferences(self, text: str) -> list[str]:
+        return self._extract_mapped_terms(text, FEATURE_KEYWORDS, "feature_preferences")
+
     def _extract_style_preferences(self, text: str) -> list[str]:
         return self._extract_mapped_terms(text, STYLE_KEYWORDS, "style_preferences")
 
     def _extract_color_preferences(self, text: str) -> list[str]:
         hits: list[str] = []
+        manual_aliases = {
+            "榛勮壊": ["榛勮壊", "黄色", "鹅黄", "奶黄"],
+            "姗欒壊": ["姗欒壊", "橙色", "橘色", "橙黄"],
+            "妫曡壊": ["妫曡壊", "棕色", "咖色", "咖啡色"],
+        }
         for canonical, variants in COLOR_KEYWORDS.items():
+            if any(variant in text for variant in variants):
+                hits.append(canonical)
+        for canonical, variants in manual_aliases.items():
+            if canonical in hits:
+                continue
             if any(variant in text for variant in variants):
                 hits.append(canonical)
         return hits
@@ -900,6 +1047,41 @@ class ConditionParser:
             if phrase in text and canonical not in hits:
                 hits.append(canonical)
         return hits
+
+    def _extract_negated_mapped_terms(
+        self,
+        text: str,
+        defaults: list[str],
+        mapping_type: str,
+    ) -> list[str]:
+        learned = self._learned_phrase_map(mapping_type)
+        candidates = list(dict.fromkeys([*defaults, *learned.keys()]))
+        negation_patterns = (
+            r"(?:不喜欢|不想要|不想看|不要|别要|别给我|不考虑|排除|避开|不爱|别推荐)\s*{term}",
+            r"{term}(?:这类|这种|风格|款式|材质)?\s*(?:不要|不喜欢|不想要|不想看)",
+        )
+
+        hits: list[str] = []
+        for candidate in candidates:
+            canonical = learned.get(candidate, candidate)
+            if canonical in hits:
+                continue
+            escaped = re.escape(candidate)
+            if any(re.search(pattern.format(term=escaped), text) for pattern in negation_patterns):
+                hits.append(canonical)
+        return hits
+
+    def _normalize_freeform_preference_term(self, raw_term: str) -> str | None:
+        term = str(raw_term or "").strip()
+        if not term:
+            return None
+
+        term = re.sub(r"^(太|偏|比较|有点|这种|那种|这个|那个)", "", term)
+        term = re.sub(r"(一点点|一点儿|一点|些|一些|感|风格|款式|材质|类型|那种|这种|的)$", "", term)
+        term = term.strip(" ，。！？,.、；;：:")
+        if len(term) < 2:
+            return None
+        return term
 
     def _extract_gift_target(self, text: str) -> str | None:
         explicit_age = self._extract_age(text)
@@ -1088,13 +1270,17 @@ class ConditionParser:
         return gift_target == "妈妈" and age is None
 
     def _extract_exclusions(self, text: str) -> list[str]:
-        result = []
-        patterns = ["不要", "不想要", "别太"]
+        hits: list[str] = []
+        patterns = (
+            r"(?:不喜欢|不想要|不想看|不要|别要|别给我|不考虑|排除|避开|不爱|别推荐|别太)\s*([^，。！？,.；;]{1,10})",
+            r"([^，。！？,.；;]{1,10})(?:这类|这种|风格|款式|材质|感觉)?\s*(?:不要|不喜欢|不想要|不想看|不考虑)",
+        )
         for pattern in patterns:
-            if pattern in text:
-                result.append(text)
-                break
-        return result
+            for match in re.finditer(pattern, text):
+                term = self._normalize_freeform_preference_term(match.group(1))
+                if term and term not in hits:
+                    hits.append(term)
+        return hits
 
     def _detect_changes(self, session_state: SessionState, conditions: dict[str, Any]) -> list[ConditionChange]:
         changes: list[ConditionChange] = []
@@ -1115,6 +1301,9 @@ class ConditionParser:
 
     def _has_enough_for_recommendation(self, conditions: dict[str, Any], session_state: SessionState) -> bool:
         budget = conditions.get("budget") or session_state.budget
+        budget_unrestricted = conditions.get("budget_unrestricted")
+        if budget_unrestricted is None:
+            budget_unrestricted = session_state.budget_unrestricted
         category = conditions.get("category") or session_state.category
         material = (
             conditions.get("main_material")
@@ -1123,28 +1312,30 @@ class ConditionParser:
             or session_state.stone_material
         )
         color = conditions.get("color_preferences") or session_state.color_preferences
+        feature = conditions.get("feature_preferences") or session_state.feature_preferences
         gift_target = conditions.get("gift_target") or session_state.gift_target
         style = conditions.get("style_preferences") or session_state.style_preferences
         luxury = conditions.get("luxury_intent") or session_state.luxury_intent
         if self._needs_mother_age_followup(conditions=conditions, session_state=session_state):
             return False
 
-        has_budget = budget is not None
+        has_budget = budget is not None or bool(budget_unrestricted)
         has_category = bool(category)
         has_material = bool(material)
         has_color = bool(color)
+        has_feature = bool(feature)
         has_target = gift_target is not None
-        has_style = bool(style) or bool(luxury)
+        has_style = bool(style) or bool(luxury) or bool(feature)
 
         if has_category and not has_budget:
             return False
 
         # If the user only gives budget + category, keep one more follow-up turn
         # so we can refine by gifting target, material, or style before recommending.
-        if has_budget and has_category and not (has_material or has_color or has_target or has_style):
+        if has_budget and has_category and not (has_material or has_color or has_feature or has_target or has_style):
             return False
 
-        detailed_signal_count = sum([has_category, has_material, has_color, has_target, has_style])
+        detailed_signal_count = sum([has_category, has_material, has_color, has_feature, has_target, has_style])
         if has_budget and detailed_signal_count >= 1:
             return True
         if detailed_signal_count >= 3:
@@ -1154,6 +1345,9 @@ class ConditionParser:
     def _pick_followup_question(self, *, session_state: SessionState, conditions: dict[str, Any]) -> str:
         category = conditions.get("category") or session_state.category
         budget = conditions.get("budget") or session_state.budget
+        budget_unrestricted = conditions.get("budget_unrestricted")
+        if budget_unrestricted is None:
+            budget_unrestricted = session_state.budget_unrestricted
         gift_target = conditions.get("gift_target") or session_state.gift_target
         material = (
             conditions.get("main_material")
@@ -1162,18 +1356,20 @@ class ConditionParser:
             or session_state.stone_material
         )
         color = conditions.get("color_preferences") or session_state.color_preferences
+        feature = conditions.get("feature_preferences") or session_state.feature_preferences
         style = conditions.get("style_preferences") or session_state.style_preferences
         luxury = conditions.get("luxury_intent") or session_state.luxury_intent
+        budget_known = budget is not None or bool(budget_unrestricted)
 
         if self._needs_mother_age_followup(conditions=conditions, session_state=session_state):
             return "方便告诉我佩戴者大概年龄吗？如果是50岁以上的女性，我会优先按退休妈妈款来帮您筛选。"
         if not category:
             return "您更想看项链、手链、耳饰还是戒指呢？"
-        if budget is None:
+        if not budget_known:
             return "方便告诉我大概预算区间吗？这样我可以更快帮您筛到合适的款。"
-        if category and material and budget is None:
+        if category and material and not budget_known:
             return "这类材质和款式我已经记下了，方便告诉我大概预算区间吗？这样我能先帮您筛掉不合适的款。"
-        if category and budget is not None and gift_target is None:
+        if category and budget_known and gift_target is None:
             return "这次您是自己佩戴，还是送女友、妈妈、闺蜜或男友呢？我可以按人群帮您再细分。"
         if gift_target is None:
             return "这次您是自己佩戴，还是送女友、妈妈或闺蜜呢？"

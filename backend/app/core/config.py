@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     default_budget_tolerance: float = 0.15
     expanded_budget_tolerance: float = 0.20
     product_color_cache_path: str = ""
+    user_chat_log_path: str = ""
     product_color_inference_limit: int = 24
     product_color_inference_concurrency: int = 4
     cors_allowed_origins: str = ""
@@ -59,6 +60,13 @@ class Settings(BaseSettings):
         if raw:
             return Path(raw)
         return self.backend_root / "data" / "product_color_cache.json"
+
+    @property
+    def resolved_user_chat_log_path(self) -> Path:
+        raw = self.user_chat_log_path.strip()
+        if raw:
+            return Path(raw)
+        return self.backend_root / "data" / "user_chat_logs.jsonl"
 
 
 @lru_cache(maxsize=1)

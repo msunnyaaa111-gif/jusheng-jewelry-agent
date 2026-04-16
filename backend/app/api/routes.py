@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from time import perf_counter
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,9 +10,11 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
+from app.repositories.chat_log_repository import ChatLogRepository
 from app.repositories.mapping_repository import MappingRepository
 from app.repositories.product_repository import ProductRepository
 from app.schemas.chat import CatalogSummaryResponse, ChatRequest, ChatResponse
+from app.schemas.logs import ChatLogListResponse
 from app.schemas.mapping import (
     DialogueTrainingLogResponse,
     MappingListResponse,
@@ -30,6 +33,7 @@ logger = logging.getLogger(__name__)
 _dialogue_service: DialogueService | None = None
 _product_repository: ProductRepository | None = None
 _mapping_repository: MappingRepository | None = None
+_chat_log_repository: ChatLogRepository | None = None
 
 
 async def _build_http_error_detail(exc: Exception) -> dict[str, object]:
@@ -79,6 +83,13 @@ def get_mapping_repository(settings: Settings = Depends(get_settings)) -> Mappin
     return _mapping_repository
 
 
+def get_chat_log_repository(settings: Settings = Depends(get_settings)) -> ChatLogRepository:
+    global _chat_log_repository
+    if _chat_log_repository is None:
+        _chat_log_repository = ChatLogRepository(settings)
+    return _chat_log_repository
+
+
 def get_dialogue_service(
     settings: Settings = Depends(get_settings),
     product_repository: ProductRepository = Depends(get_product_repository),
@@ -103,6 +114,28 @@ def get_dialogue_service(
     return _dialogue_service
 
 
+def _log_chat_turn(
+    *,
+    chat_log_repository: ChatLogRepository,
+    request: ChatRequest,
+    response_payload: dict[str, object],
+    duration_ms: int | None,
+    status: str = "ok",
+    error_message: str | None = None,
+) -> None:
+    chat_log_repository.append_log(
+        session_id=request.session_id,
+        user_id=request.user_id,
+        request_text=request.text.strip(),
+        image_urls=list(request.image_urls),
+        response_mode=request.response_mode,
+        response=response_payload,
+        duration_ms=duration_ms,
+        status=status,
+        error_message=error_message,
+    )
+
+
 @router.get("/health", tags=["System"], summary="健康检查")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, str | bool]:
     return {
@@ -122,16 +155,25 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, str | bool]:
 async def chat_message(
     request: ChatRequest,
     dialogue_service: DialogueService = Depends(get_dialogue_service),
+    chat_log_repository: ChatLogRepository = Depends(get_chat_log_repository),
 ) -> ChatResponse:
     if not request.text.strip() and not request.image_urls:
         raise HTTPException(status_code=400, detail="text 和 image_urls 不能同时为空。")
 
+    started_at = perf_counter()
     result = await dialogue_service.handle_message(
         session_id=request.session_id,
         text=request.text.strip() or "用户上传了图片",
         response_mode=request.response_mode,
     )
-    return ChatResponse(session_id=request.session_id, **result)
+    response = ChatResponse(session_id=request.session_id, **result)
+    _log_chat_turn(
+        chat_log_repository=chat_log_repository,
+        request=request,
+        response_payload=jsonable_encoder(response),
+        duration_ms=int((perf_counter() - started_at) * 1000),
+    )
+    return response
 
 
 @router.post(
@@ -143,9 +185,12 @@ async def chat_message(
 async def chat_stream(
     request: ChatRequest,
     dialogue_service: DialogueService = Depends(get_dialogue_service),
+    chat_log_repository: ChatLogRepository = Depends(get_chat_log_repository),
 ) -> StreamingResponse:
     if not request.text.strip() and not request.image_urls:
         raise HTTPException(status_code=400, detail="text 和 image_urls 不能同时为空。")
+
+    started_at = perf_counter()
 
     async def event_generator():
         try:
@@ -154,6 +199,13 @@ async def chat_stream(
             text=request.text.strip() or "用户上传了图片",
             response_mode=request.response_mode,
         ):
+                if event["type"] == "done" and event.get("response"):
+                    _log_chat_turn(
+                        chat_log_repository=chat_log_repository,
+                        request=request,
+                        response_payload=jsonable_encoder(event["response"]),
+                        duration_ms=int((perf_counter() - started_at) * 1000),
+                    )
                 yield _format_sse(event["type"], event.get("response") or {"text": event.get("text", "")})
         except Exception:
             logger.exception("Streaming chat response failed", extra={"session_id": request.session_id})
@@ -166,6 +218,14 @@ async def chat_stream(
                 followup_question=None,
                 recommended_products=[],
                 session_state=dialogue_service.get_session_state(request.session_id),
+            )
+            _log_chat_turn(
+                chat_log_repository=chat_log_repository,
+                request=request,
+                response_payload=jsonable_encoder(fallback_response),
+                duration_ms=int((perf_counter() - started_at) * 1000),
+                status="stream_fallback",
+                error_message="streaming chat response failed",
             )
             yield _format_sse("done", fallback_response.model_dump())
 
@@ -239,6 +299,29 @@ def mapping_examples(
 ) -> DialogueTrainingLogResponse:
     return DialogueTrainingLogResponse(
         examples=mapping_repository.recent_dialogue_examples(),
+    )
+
+
+@router.get(
+    "/api/admin/chat-logs",
+    response_model=ChatLogListResponse,
+    tags=["Admin"],
+    summary="查看用户对话日志",
+)
+def chat_logs(
+    session_id: str | None = Query(default=None, description="Filter by session ID."),
+    user_id: str | None = Query(default=None, description="Filter by user ID."),
+    keyword: str | None = Query(default=None, description="Keyword search in request, reply, or product names."),
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum number of log records."),
+    chat_log_repository: ChatLogRepository = Depends(get_chat_log_repository),
+) -> ChatLogListResponse:
+    return ChatLogListResponse(
+        logs=chat_log_repository.recent_logs(
+            limit=limit,
+            session_id=session_id,
+            user_id=user_id,
+            keyword=keyword,
+        )
     )
 
 

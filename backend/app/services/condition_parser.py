@@ -285,6 +285,8 @@ class ConditionParser:
         action = heuristic.get("action")
         if action in {"GREETING", "ASK_FOLLOWUP", "RERANK_AND_RECOMMEND"}:
             return True
+        if action == "RETRIEVE_AND_RECOMMEND" and self._is_open_catalog_recommend_request(normalized):
+            return True
 
         if normalized.lower() in {"好", "好的", "可以", "行", "嗯", "嗯嗯", "要", "不要", "不用", "ok", "okay"}:
             return True
@@ -550,15 +552,15 @@ class ConditionParser:
             action = "RERANK_AND_RECOMMEND"
             intent = "ask_more_options"
             needs_followup = False
+        elif self._is_open_catalog_recommend_request(text):
+            action = "RETRIEVE_AND_RECOMMEND"
+            intent = "ask_recommendation"
+            needs_followup = False
         elif self._is_broad_recommend_request(text) and (meaningful or session_state.has_meaningful_conditions()):
             enough = self._has_minimum_context_for_broad_recommend(conditions, session_state)
             action = "RETRIEVE_AND_RECOMMEND" if enough else "ASK_FOLLOWUP"
             intent = "ask_recommendation" if enough else "provide_conditions"
             needs_followup = not enough
-        elif self._is_open_catalog_recommend_request(text):
-            action = "RETRIEVE_AND_RECOMMEND"
-            intent = "ask_recommendation"
-            needs_followup = False
         elif greeting and not session_state.has_meaningful_conditions():
             action = "GREETING"
             intent = "greeting"
@@ -762,10 +764,20 @@ class ConditionParser:
             "随便给我推荐",
             "随便帮我推荐",
             "随便来几款",
+            "什么都推荐",
+            "什么都推",
+            "都推荐一下",
+            "都推一下",
+            "都可以看",
+            "都行看",
+            "不限品类",
+            "不挑品类",
             "推荐几样",
             "推荐几款",
             "推荐几个",
             "推荐一些",
+            "推荐一下",
+            "推一下",
             "你看着推荐",
             "看着推荐",
             "都可以推荐",
@@ -781,6 +793,9 @@ class ConditionParser:
         broad_patterns = (
             r"随便.*推荐",
             r"推荐.*随便",
+            r"什么都.*(?:推荐|推|看)",
+            r"(?:都|全部|全都).*(?:推荐|推|看)(?:一下)?",
+            r"(?:不限|不挑).*(?:品类|款式|类别)",
             r"(?:给我|帮我)?推荐(?:几|一)(?:样|款|个|些)",
         )
         return any(marker in text for marker in broad_markers) or any(
@@ -788,13 +803,63 @@ class ConditionParser:
         )
 
     def _is_open_catalog_recommend_request(self, text: str) -> bool:
-        open_catalog_patterns = (
-            r"随便.*推荐",
-            r"推荐.*随便",
-            r"(?:给我|帮我)?推荐(?:几|一)(?:样|款|个|些)",
-            r"(?:给我|帮我|直接|先)?(?:推荐|推)(?:几|一)(?:样|款|个|些)",
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+
+        if self._has_open_scope_signal(normalized) and self._has_recommendation_action(normalized):
+            return True
+
+        return self._is_pure_recommendation_request(normalized)
+
+    def _has_open_scope_signal(self, text: str) -> bool:
+        open_scope_markers = (
+            "随便",
+            "什么都",
+            "啥都",
+            "都行",
+            "都可以",
+            "都可",
+            "均可",
+            "不限",
+            "不挑",
+            "没要求",
+            "没有要求",
+            "无所谓",
+            "任意",
+            "随意",
+            "你看着",
+            "看着办",
+            "你决定",
+            "你来定",
+            "帮我挑",
+            "帮我选",
+            "你帮我",
+            "先看看",
+            "先看一批",
+            "先来一批",
         )
-        return any(re.search(pattern, text) for pattern in open_catalog_patterns)
+        return any(marker in text for marker in open_scope_markers)
+
+    def _has_recommendation_action(self, text: str) -> bool:
+        action_patterns = (
+            r"推荐",
+            r"推(?:一下|几|一|点|款|个|些|荐)?",
+            r"(?:挑|选|找|看|来)(?:一下|一批|一轮|几款|几样|几个|一些|点)?",
+            r"有(?:什么|啥|没有|没|哪些)?.*(?:推荐|好看|合适|适合|款)",
+        )
+        return any(re.search(pattern, text) for pattern in action_patterns)
+
+    def _is_pure_recommendation_request(self, text: str) -> bool:
+        compact = re.sub(r"[\s,，。.!！？?、~～]+", "", text)
+        compact = re.sub(r"(请|麻烦|可以|能不能|能否|能|帮我|给我|给|我|您|你|呀|啊|哈)+", "", compact)
+        compact = re.sub(r"(?:吗|嘛|么|呢|吧|啦|了|一下|看看)+$", "", compact)
+
+        pure_patterns = (
+            r"^(?:推荐|推|挑|选|找|看|来)(?:一批|一轮|几款|几样|几个|一些|点)?$",
+            r"^(?:有啥|有什么|有没有|有没|有哪些)?(?:推荐|好看款|合适款|适合款)$",
+        )
+        return any(re.fullmatch(pattern, compact) for pattern in pure_patterns)
 
     def _has_minimum_context_for_broad_recommend(
         self,

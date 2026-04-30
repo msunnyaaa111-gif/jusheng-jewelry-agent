@@ -241,6 +241,39 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertIsNone(result["followup_question"])
         self.assertFalse(result["needs_followup"])
 
+    def test_open_catalog_recommendation_variants_should_not_ask_category_first(self) -> None:
+        messages = [
+            "什么都推荐一下吧",
+            "都行你帮我挑",
+            "不限品类先看一批",
+            "没要求你看着推荐",
+            "有啥推荐吗",
+            "推荐一下吧",
+            "来几款看看",
+            "帮我选一批",
+            "项链都行推荐一下",
+        ]
+
+        for message in messages:
+            with self.subTest(message=message):
+                result = self.parser._heuristic_parse(
+                    message=message,
+                    session_state=SessionState(),
+                )
+
+                self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+                self.assertIsNone(result["followup_question"])
+                self.assertFalse(result["needs_followup"])
+
+    def test_category_only_without_open_scope_still_asks_for_budget(self) -> None:
+        result = self.parser._heuristic_parse(
+            message="推荐一下项链",
+            session_state=SessionState(),
+        )
+
+        self.assertEqual(result["action"], "ASK_FOLLOWUP")
+        self.assertIn("预算", result["followup_question"])
+
     def test_broad_recommend_request_should_rerank_when_already_recommended(self) -> None:
         state = SessionState(
             budget=300.0,
@@ -296,6 +329,37 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
         self.assertTrue(result["should_refresh_retrieval"])
         self.assertIn("成熟", result["conditions"]["excluded_preferences"])
+
+
+class OpenCatalogLlmBypassTests(unittest.IsolatedAsyncioTestCase):
+    async def test_open_catalog_recommendation_uses_heuristic_when_llm_is_enabled(self) -> None:
+        class FailingLongCatClient:
+            def __init__(self) -> None:
+                self.settings = SimpleNamespace(llm_enabled=True)
+                self.calls = 0
+
+            async def chat_completion(self, **_: object) -> str:
+                self.calls += 1
+                raise AssertionError("open catalog recommendation should not call LLM parser")
+
+            def extract_json_block(self, raw: str) -> dict:
+                return {}
+
+        client = FailingLongCatClient()
+        parser = ConditionParser(longcat_client=client)
+
+        for message in ["什么都推荐一下吧", "有啥推荐吗", "都行你帮我挑"]:
+            with self.subTest(message=message):
+                result = await parser.parse(
+                    message=message,
+                    session_state=SessionState(),
+                    recent_history=[],
+                )
+
+                self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+                self.assertFalse(result["needs_followup"])
+        self.assertEqual(client.calls, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

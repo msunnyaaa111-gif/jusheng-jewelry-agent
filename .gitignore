@@ -17,8 +17,10 @@ frontend/*.tsbuildinfo
 金榕珠宝货盘-智能体2二维码完成版(1).xlsx
 
 backend/data/catalog_assets/
+backend/data/catalog_media/
 backend/data/exports/
 backend/data/mapping_training_log.jsonl
+backend/data/user_chat_logs.jsonl
 
 jusheng-upload-ready/
 金榕珠宝智能体1_backup_*/

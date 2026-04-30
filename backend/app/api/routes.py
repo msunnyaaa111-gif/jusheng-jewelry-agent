@@ -112,26 +112,40 @@ def _looks_like_token(value: str) -> bool:
 
 
 @lru_cache(maxsize=1)
-def get_product_repository(settings: Settings = Depends(get_settings)) -> ProductRepository:
+def _get_product_repository_cached() -> ProductRepository:
+    settings = get_settings()
     return ProductRepository(settings)
 
 
+def get_product_repository() -> ProductRepository:
+    return _get_product_repository_cached()
+
+
 @lru_cache(maxsize=1)
-def get_mapping_repository(settings: Settings = Depends(get_settings)) -> MappingRepository:
+def _get_mapping_repository_cached() -> MappingRepository:
+    settings = get_settings()
     return MappingRepository(settings)
 
 
+def get_mapping_repository() -> MappingRepository:
+    return _get_mapping_repository_cached()
+
+
 @lru_cache(maxsize=1)
-def get_chat_log_repository(settings: Settings = Depends(get_settings)) -> ChatLogRepository:
+def _get_chat_log_repository_cached() -> ChatLogRepository:
+    settings = get_settings()
     return ChatLogRepository(settings)
 
 
+def get_chat_log_repository() -> ChatLogRepository:
+    return _get_chat_log_repository_cached()
+
+
 @lru_cache(maxsize=1)
-def get_dialogue_service(
-    settings: Settings = Depends(get_settings),
-    product_repository: ProductRepository = Depends(get_product_repository),
-    mapping_repository: MappingRepository = Depends(get_mapping_repository),
-) -> DialogueService:
+def _get_dialogue_service_cached() -> DialogueService:
+    settings = get_settings()
+    product_repository = get_product_repository()
+    mapping_repository = get_mapping_repository()
     longcat_client = LongCatClient(settings)
     condition_parser = ConditionParser(longcat_client, mapping_repository=mapping_repository)
     color_inference_service = ProductColorInferenceService(settings, longcat_client)
@@ -146,6 +160,10 @@ def get_dialogue_service(
         longcat_client=longcat_client,
         mapping_repository=mapping_repository,
     )
+
+
+def get_dialogue_service() -> DialogueService:
+    return _get_dialogue_service_cached()
 
 
 def _log_chat_turn(

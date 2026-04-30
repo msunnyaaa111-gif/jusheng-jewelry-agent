@@ -20,6 +20,7 @@ type ChatResponse = {
   session_id: string;
   action: string;
   reply_text: string;
+  reply_source?: string | null;
   purchase_advice?: string | null;
   followup_question?: string | null;
   recommended_products: RecommendedProduct[];

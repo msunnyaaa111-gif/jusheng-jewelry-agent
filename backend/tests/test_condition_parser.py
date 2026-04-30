@@ -20,6 +20,10 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         conditions = self.parser.extract_explicit_conditions("想看一条日常戴的项链，买给我自己")
         self.assertEqual(conditions["gift_target"], "自戴")
 
+    def test_extract_self_wear_from_single_word_reply(self) -> None:
+        conditions = self.parser.extract_explicit_conditions("自己")
+        self.assertEqual(conditions["gift_target"], "自戴")
+
     def test_canonicalize_llm_self_target_values(self) -> None:
         self.assertEqual(self.parser._canonicalize_condition("gift_target", "我自己"), "自戴")
         self.assertEqual(self.parser._canonicalize_condition("gift_target", "本人"), "自戴")
@@ -206,6 +210,63 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
 
         result = self.parser._heuristic_parse(
             message="预算都可以",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_broad_recommend_request_should_retrieve_when_context_is_enough(self) -> None:
+        state = SessionState(
+            budget=300.0,
+            category=["手链"],
+            last_recommended_codes=[],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="全部都详细说",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_open_catalog_recommend_request_should_not_ask_category_first(self) -> None:
+        result = self.parser._heuristic_parse(
+            message="随便给我推荐几样",
+            session_state=SessionState(),
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertIsNone(result["followup_question"])
+        self.assertFalse(result["needs_followup"])
+
+    def test_broad_recommend_request_should_rerank_when_already_recommended(self) -> None:
+        state = SessionState(
+            budget=300.0,
+            category=["手链"],
+            gift_target="自戴",
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="随便推荐几款",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
+
+    def test_detail_request_should_not_rerank_existing_recommendations(self) -> None:
+        state = SessionState(
+            budget=300.0,
+            category=["手链"],
+            gift_target="自戴",
+            last_recommended_codes=["A001", "A002"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="全部都详细说",
             session_state=state,
         )
 

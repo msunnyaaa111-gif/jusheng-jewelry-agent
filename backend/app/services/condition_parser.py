@@ -542,11 +542,7 @@ class ConditionParser:
             for change in changes
         )
 
-        if greeting and not session_state.has_meaningful_conditions():
-            action = "GREETING"
-            intent = "greeting"
-            needs_followup = True
-        elif self._should_rerank_from_context(
+        if self._should_rerank_from_context(
             text=text,
             session_state=session_state,
             refresh=refresh,
@@ -554,6 +550,19 @@ class ConditionParser:
             action = "RERANK_AND_RECOMMEND"
             intent = "ask_more_options"
             needs_followup = False
+        elif self._is_broad_recommend_request(text) and (meaningful or session_state.has_meaningful_conditions()):
+            enough = self._has_minimum_context_for_broad_recommend(conditions, session_state)
+            action = "RETRIEVE_AND_RECOMMEND" if enough else "ASK_FOLLOWUP"
+            intent = "ask_recommendation" if enough else "provide_conditions"
+            needs_followup = not enough
+        elif self._is_open_catalog_recommend_request(text):
+            action = "RETRIEVE_AND_RECOMMEND"
+            intent = "ask_recommendation"
+            needs_followup = False
+        elif greeting and not session_state.has_meaningful_conditions():
+            action = "GREETING"
+            intent = "greeting"
+            needs_followup = True
         elif meaningful or session_state.has_meaningful_conditions():
             enough = self._has_enough_for_recommendation(conditions, session_state)
             action = "RETRIEVE_AND_RECOMMEND" if enough else "ASK_FOLLOWUP"
@@ -719,6 +728,8 @@ class ConditionParser:
             return False
         if self._is_result_detail_followup(normalized):
             return False
+        if self._is_broad_recommend_request(normalized):
+            return True
         if self._is_short_confirmation(normalized):
             return False
 
@@ -744,6 +755,81 @@ class ConditionParser:
             return True
 
         return False
+
+    def _is_broad_recommend_request(self, text: str) -> bool:
+        broad_markers = (
+            "随便推荐",
+            "随便给我推荐",
+            "随便帮我推荐",
+            "随便来几款",
+            "推荐几样",
+            "推荐几款",
+            "推荐几个",
+            "推荐一些",
+            "你看着推荐",
+            "看着推荐",
+            "都可以推荐",
+            "都行推荐",
+            "直接推荐",
+            "先推荐",
+            "详细说说",
+            "详细说",
+            "详细介绍",
+            "全部都详细说",
+            "都详细说",
+        )
+        broad_patterns = (
+            r"随便.*推荐",
+            r"推荐.*随便",
+            r"(?:给我|帮我)?推荐(?:几|一)(?:样|款|个|些)",
+        )
+        return any(marker in text for marker in broad_markers) or any(
+            re.search(pattern, text) for pattern in broad_patterns
+        )
+
+    def _is_open_catalog_recommend_request(self, text: str) -> bool:
+        open_catalog_patterns = (
+            r"随便.*推荐",
+            r"推荐.*随便",
+            r"(?:给我|帮我)?推荐(?:几|一)(?:样|款|个|些)",
+            r"(?:给我|帮我|直接|先)?(?:推荐|推)(?:几|一)(?:样|款|个|些)",
+        )
+        return any(re.search(pattern, text) for pattern in open_catalog_patterns)
+
+    def _has_minimum_context_for_broad_recommend(
+        self,
+        conditions: dict[str, Any],
+        session_state: SessionState,
+    ) -> bool:
+        if self._has_enough_for_recommendation(conditions, session_state):
+            return True
+
+        category = conditions.get("category") or session_state.category
+        budget = conditions.get("budget") or session_state.budget
+        budget_unrestricted = conditions.get("budget_unrestricted")
+        if budget_unrestricted is None:
+            budget_unrestricted = session_state.budget_unrestricted
+        budget_known = budget is not None or bool(budget_unrestricted)
+
+        material = (
+            conditions.get("main_material")
+            or session_state.main_material
+            or conditions.get("stone_material")
+            or session_state.stone_material
+        )
+        color = conditions.get("color_preferences") or session_state.color_preferences
+        feature = conditions.get("feature_preferences") or session_state.feature_preferences
+        gift_target = conditions.get("gift_target") or session_state.gift_target
+        style = conditions.get("style_preferences") or session_state.style_preferences
+        luxury = conditions.get("luxury_intent") or session_state.luxury_intent
+        constellation = conditions.get("constellation") or session_state.constellation
+        zodiac = conditions.get("zodiac") or session_state.zodiac
+
+        rich_signal_count = sum(
+            bool(item)
+            for item in (material, color, feature, gift_target, style, luxury, constellation, zodiac)
+        )
+        return bool(category) and (budget_known or rich_signal_count >= 2)
 
     def _looks_like_condition_adjustment(self, text: str) -> bool:
         adjustment_markers = (
@@ -777,6 +863,11 @@ class ConditionParser:
             "推荐哪个",
             "为什么",
             "为啥",
+            "详细说说",
+            "详细说",
+            "详细介绍",
+            "全部都详细说",
+            "都详细说",
             "什么意思",
             "怎么样",
             "好不好",
@@ -1220,6 +1311,8 @@ class ConditionParser:
             "我日常戴",
             "日常自己戴",
         )
+        if text in {"自己", "我自己", "本人"}:
+            return True
         if any(term in text for term in direct_terms):
             return True
 

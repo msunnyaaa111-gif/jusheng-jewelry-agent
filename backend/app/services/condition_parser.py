@@ -10,6 +10,9 @@ from app.repositories.mapping_repository import MappingRepository
 from app.services.longcat_client import LongCatClient
 
 
+BROWSE_REFUSAL_FOLLOWUP = "好的，那我先不推荐商品。您想换个方向看看，还是稍后再挑？"
+
+
 CONSTELLATIONS = [
     "白羊座",
     "金牛座",
@@ -493,6 +496,7 @@ class ConditionParser:
     def _heuristic_parse(self, *, message: str, session_state: SessionState) -> dict[str, Any]:
         text = self._normalize_text(message)
         conditions = self.extract_explicit_conditions(text)
+        browse_refusal = self._is_browse_refusal(text)
 
         meaningful = any(
             [
@@ -550,7 +554,11 @@ class ConditionParser:
         open_catalog_request = self._is_open_catalog_recommend_request(text)
         open_scope_delegation = self._is_open_scope_delegation(text)
 
-        if self._should_rerank_from_context(
+        if browse_refusal:
+            action = "ASK_FOLLOWUP"
+            intent = "decline_recommendation"
+            needs_followup = True
+        elif self._should_rerank_from_context(
             text=text,
             session_state=session_state,
             refresh=refresh,
@@ -583,7 +591,10 @@ class ConditionParser:
             intent = "casual_chat"
             needs_followup = True
 
-        followup = self._pick_followup_question(session_state=session_state, conditions=conditions) if needs_followup else None
+        if browse_refusal:
+            followup = BROWSE_REFUSAL_FOLLOWUP
+        else:
+            followup = self._pick_followup_question(session_state=session_state, conditions=conditions) if needs_followup else None
 
         return {
             "intent": intent,
@@ -814,6 +825,8 @@ class ConditionParser:
         normalized = self._normalize_text(text)
         if not normalized:
             return False
+        if self._is_browse_refusal(normalized):
+            return False
         if self._has_negative_open_scope_signal(normalized):
             return False
 
@@ -825,6 +838,8 @@ class ConditionParser:
     def _is_open_scope_delegation(self, text: str) -> bool:
         normalized = self._normalize_text(text)
         if not normalized:
+            return False
+        if self._is_browse_refusal(normalized):
             return False
         if not self._has_open_scope_signal(normalized):
             return False
@@ -841,8 +856,23 @@ class ConditionParser:
         negative_patterns = (
             r"(?:\u4e0d\u8981|\u522b|\u4e0d\u60f3|\u4e0d\u80fd).{0,6}"
             r"(?:\u968f\u4fbf|\u968f\u610f|\u4efb\u610f|\u4ec0\u4e48\u90fd|\u5565\u90fd|\u4e71|\u76f2\u76ee)",
+            r"(?:\u968f\u4fbf|\u968f\u610f|\u4efb\u610f|\u4ec0\u4e48\u90fd|\u5565\u90fd|\u4efb\u4f55\u4e1c\u897f|\u5168\u90e8|\u5168\u90fd).{0,6}"
+            r"(?:\u4e0d\u60f3\u770b|\u4e0d\u770b|\u4e0d\u8981\u770b|\u4e0d\u60f3\u8981|\u4e0d\u8981|\u6ca1\u5174\u8da3)",
         )
         return any(re.search(pattern, compact) for pattern in negative_patterns)
+
+    def _is_browse_refusal(self, text: str) -> bool:
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+        compact = re.sub(r"[\s,\uFF0C\u3002.!?\uFF01\uFF1F\u3001~\uFF5E]+", "", normalized)
+        refusal_patterns = (
+            r"^(?:\u6211)?(?:\u5565\u90fd|\u4ec0\u4e48\u90fd|\u4ec0\u4e48\u4e5f|\u4efb\u4f55\u4e1c\u897f|\u4efb\u4f55\u6b3e|\u5168\u90e8|\u5168\u90fd|\u90fd)"
+            r"(?:\u4e0d\u60f3\u770b|\u4e0d\u770b|\u4e0d\u8981\u770b|\u4e0d\u60f3\u8981|\u4e0d\u8981|\u6ca1\u5174\u8da3)(?:\u4e86|\u5566|\u5427)?$",
+            r"^(?:\u6211)?(?:\u4e0d\u60f3\u770b|\u4e0d\u770b|\u4e0d\u8981\u770b)(?:\u4efb\u4f55\u4e1c\u897f|\u4efb\u4f55\u6b3e|\u4efb\u4f55)(?:\u4e86|\u5566|\u5427)?$",
+            r"^(?:\u6211)?(?:\u5148|\u6682\u65f6|\u73b0\u5728|\u76ee\u524d)?(?:\u4e0d\u60f3\u770b|\u4e0d\u770b|\u4e0d\u8981\u770b|\u4e0d\u60f3\u4e70|\u4e0d\u4e70)(?:\u4e86|\u5566|\u5427)?$",
+        )
+        return any(re.search(pattern, compact) for pattern in refusal_patterns)
 
     def _has_open_scope_signal(self, text: str) -> bool:
         open_scope_markers = (
@@ -1550,6 +1580,8 @@ class ConditionParser:
         return gift_target == "妈妈" and age is None
 
     def _extract_exclusions(self, text: str) -> list[str]:
+        if self._is_browse_refusal(text):
+            return []
         hits: list[str] = []
         patterns = (
             r"(?:不喜欢|不想要|不想看|不要|别要|别给我|不考虑|排除|避开|不爱|别推荐|别太)\s*([^，。！？,.；;]{1,10})",

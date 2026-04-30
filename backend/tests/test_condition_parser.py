@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from app.models.session import SessionState
-from app.services.condition_parser import ConditionParser
+from app.services.condition_parser import BROWSE_REFUSAL_FOLLOWUP, ConditionParser
 
 
 class ConditionParserGiftTargetTests(unittest.TestCase):
@@ -244,6 +244,7 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
     def test_open_catalog_recommendation_variants_should_not_ask_category_first(self) -> None:
         messages = [
             "什么都推荐一下吧",
+            "啥都推荐一下吧",
             "都行你帮我挑",
             "不限品类先看一批",
             "没要求你看着推荐",
@@ -315,6 +316,28 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(result["action"], "ASK_FOLLOWUP")
         self.assertIsNotNone(result["followup_question"])
         self.assertTrue(result["needs_followup"])
+
+    def test_browse_refusal_should_not_recommend_or_pollute_exclusions(self) -> None:
+        messages = [
+            "\u5565\u90fd\u4e0d\u60f3\u770b",
+            "\u4ec0\u4e48\u90fd\u4e0d\u60f3\u770b",
+            "\u4e0d\u60f3\u770b\u4efb\u4f55\u4e1c\u897f",
+            "\u5148\u4e0d\u770b\u4e86",
+            "\u6682\u65f6\u4e0d\u770b\u4e86",
+        ]
+
+        for message in messages:
+            with self.subTest(message=message):
+                result = self.parser._heuristic_parse(
+                    message=message,
+                    session_state=SessionState(budget=800.0),
+                )
+
+                self.assertEqual(result["action"], "ASK_FOLLOWUP")
+                self.assertEqual(result["intent"], "decline_recommendation")
+                self.assertEqual(result["followup_question"], BROWSE_REFUSAL_FOLLOWUP)
+                self.assertTrue(result["needs_followup"])
+                self.assertEqual(result["conditions"]["excluded_preferences"], [])
 
     def test_category_only_without_open_scope_still_asks_for_budget(self) -> None:
         result = self.parser._heuristic_parse(

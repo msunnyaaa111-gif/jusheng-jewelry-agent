@@ -3,6 +3,7 @@
 import unittest
 from types import SimpleNamespace
 
+from app.services.condition_parser import BROWSE_REFUSAL_FOLLOWUP, ConditionParser
 from app.services.dialogue_service import DialogueService
 
 
@@ -165,6 +166,36 @@ class DialogueServiceRerankTests(unittest.IsolatedAsyncioTestCase):
             ["B001", "B002"],
         )
         self.assertEqual(recommendation_service.exclude_calls[1], ["A001", "A002", "A003"])
+
+    async def test_browse_refusal_returns_followup_without_product_cards(self) -> None:
+        recommendation_service = FakeRecommendationService()
+        longcat_client = SimpleNamespace(settings=SimpleNamespace(llm_enabled=False))
+        service = DialogueService(
+            condition_parser=ConditionParser(longcat_client=longcat_client),
+            recommendation_service=recommendation_service,
+            longcat_client=longcat_client,
+        )
+
+        result = await service.handle_message(
+            session_id="browse-refusal-session",
+            text="\u5565\u90fd\u4e0d\u60f3\u770b",
+        )
+
+        self.assertEqual(result["action"], "ASK_FOLLOWUP")
+        self.assertEqual(result["followup_question"], BROWSE_REFUSAL_FOLLOWUP)
+        self.assertEqual(result["recommended_products"], [])
+        self.assertEqual(result["session_state"].excluded_preferences, [])
+        self.assertEqual(recommendation_service.exclude_calls, [])
+
+        followup = await service.handle_message(
+            session_id="browse-refusal-session",
+            text="\u63a8\u8350\u4e00\u4e0b\u9879\u94fe",
+        )
+
+        self.assertEqual(followup["action"], "ASK_FOLLOWUP")
+        self.assertIn("\u9884\u7b97", followup["followup_question"])
+        self.assertEqual(followup["recommended_products"], [])
+        self.assertEqual(followup["session_state"].excluded_preferences, [])
 
 
 if __name__ == "__main__":

@@ -922,6 +922,9 @@ class DialogueService:
             "对",
             "对的",
             "那就这样",
+            "自己",
+            "我自己",
+            "本人",
         }
         return text in affirmative_texts or text.startswith(("要", "好", "可以", "行", "那就", "那你就"))
 

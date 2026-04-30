@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -139,7 +140,7 @@ class ProductRepository:
 
         self.workbook_path = workbook_path
         self.catalog_source_path = workbook_path
-        self.products = products
+        self.products = self._suppress_duplicate_qr_assets(products)
         self.loaded = True
 
     def summary(self) -> dict[str, Any]:
@@ -192,8 +193,33 @@ class ProductRepository:
 
         self.workbook_path = None
         self.catalog_source_path = json_path
-        self.products = products
+        self.products = self._suppress_duplicate_qr_assets(products)
         self.loaded = True
+
+    def _suppress_duplicate_qr_assets(self, products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen_hashes: dict[str, str] = {}
+        normalized: list[dict[str, Any]] = []
+        for product in products:
+            item = dict(product)
+            qr_path = self._resolve_static_media_path(item.get("product_qr_url"))
+            if qr_path is not None:
+                digest = hashlib.sha256(qr_path.read_bytes()).hexdigest()
+                if digest in seen_hashes:
+                    item["product_qr_url"] = None
+                else:
+                    seen_hashes[digest] = str(item.get("product_code") or "")
+            normalized.append(item)
+        return normalized
+
+    def _resolve_static_media_path(self, value: Any) -> Path | None:
+        text = str(value or "").strip()
+        if not text.startswith("/static/"):
+            return None
+        relative = text.removeprefix("/static/").replace("/", "\\")
+        local_path = self.settings.backend_root / "data" / Path(relative)
+        if not local_path.exists():
+            return None
+        return local_path
 
     def _normalize_static_path(self, value: Any) -> str | None:
         text = str(value or "").strip()

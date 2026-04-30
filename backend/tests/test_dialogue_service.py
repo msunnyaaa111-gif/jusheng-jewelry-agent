@@ -109,6 +109,14 @@ class FakeRecommendationService:
 
 
 class DialogueServiceRerankTests(unittest.IsolatedAsyncioTestCase):
+    async def test_self_reply_is_treated_as_affirmative_for_pending_followup(self) -> None:
+        service = DialogueService(
+            condition_parser=FakeConditionParser(),
+            recommendation_service=FakeRecommendationService(),
+            longcat_client=SimpleNamespace(settings=SimpleNamespace(llm_enabled=False)),
+        )
+        self.assertTrue(service._is_affirmative("自己"))
+
     async def test_handle_message_defaults_to_cards_for_recommendations(self) -> None:
         recommendation_service = FakeRecommendationService()
         service = DialogueService(

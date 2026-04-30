@@ -285,7 +285,10 @@ class ConditionParser:
         action = heuristic.get("action")
         if action in {"GREETING", "ASK_FOLLOWUP", "RERANK_AND_RECOMMEND"}:
             return True
-        if action == "RETRIEVE_AND_RECOMMEND" and self._is_open_catalog_recommend_request(normalized):
+        if action == "RETRIEVE_AND_RECOMMEND" and (
+            self._is_open_catalog_recommend_request(normalized)
+            or self._is_open_scope_delegation(normalized)
+        ):
             return True
 
         if normalized.lower() in {"好", "好的", "可以", "行", "嗯", "嗯嗯", "要", "不要", "不用", "ok", "okay"}:
@@ -544,6 +547,9 @@ class ConditionParser:
             for change in changes
         )
 
+        open_catalog_request = self._is_open_catalog_recommend_request(text)
+        open_scope_delegation = self._is_open_scope_delegation(text)
+
         if self._should_rerank_from_context(
             text=text,
             session_state=session_state,
@@ -552,7 +558,9 @@ class ConditionParser:
             action = "RERANK_AND_RECOMMEND"
             intent = "ask_more_options"
             needs_followup = False
-        elif self._is_open_catalog_recommend_request(text):
+        elif open_catalog_request or (
+            open_scope_delegation and (meaningful or session_state.has_meaningful_conditions())
+        ):
             action = "RETRIEVE_AND_RECOMMEND"
             intent = "ask_recommendation"
             needs_followup = False
@@ -806,11 +814,35 @@ class ConditionParser:
         normalized = self._normalize_text(text)
         if not normalized:
             return False
+        if self._has_negative_open_scope_signal(normalized):
+            return False
 
         if self._has_open_scope_signal(normalized) and self._has_recommendation_action(normalized):
             return True
 
         return self._is_pure_recommendation_request(normalized)
+
+    def _is_open_scope_delegation(self, text: str) -> bool:
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+        if not self._has_open_scope_signal(normalized):
+            return False
+        if self._has_negative_open_scope_signal(normalized):
+            return False
+        if self._is_short_confirmation(normalized):
+            return False
+        if self._is_result_detail_followup(normalized):
+            return False
+        return True
+
+    def _has_negative_open_scope_signal(self, text: str) -> bool:
+        compact = re.sub(r"[\s,\uFF0C\u3002.!?\uFF01\uFF1F\u3001~\uFF5E]+", "", text)
+        negative_patterns = (
+            r"(?:\u4e0d\u8981|\u522b|\u4e0d\u60f3|\u4e0d\u80fd).{0,6}"
+            r"(?:\u968f\u4fbf|\u968f\u610f|\u4efb\u610f|\u4ec0\u4e48\u90fd|\u5565\u90fd|\u4e71|\u76f2\u76ee)",
+        )
+        return any(re.search(pattern, compact) for pattern in negative_patterns)
 
     def _has_open_scope_signal(self, text: str) -> bool:
         open_scope_markers = (

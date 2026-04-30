@@ -612,7 +612,21 @@ else:
 * 识别 `update_budget`
 * `should_refresh_retrieval = true`
 
-### **9.3 隐含偏好测试**
+### **9.3 预算后开放范围测试**
+
+输入（已有 `session_state.budget = 800`）：
+
+```text
+随便 都可以
+```
+
+期望：
+
+* `action = RETRIEVE_AND_RECOMMEND`
+* `needs_followup = false`
+* 不应继续询问项链、手链、耳饰或戒指
+
+### **9.4 隐含偏好测试**
 
 输入：
 

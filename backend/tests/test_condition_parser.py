@@ -265,6 +265,57 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
                 self.assertIsNone(result["followup_question"])
                 self.assertFalse(result["needs_followup"])
 
+    def test_open_scope_reply_after_budget_should_not_ask_category_first(self) -> None:
+        state = SessionState(budget=800.0)
+        messages = [
+            "\u968f\u4fbf \u90fd\u53ef\u4ee5",
+            "\u90fd\u53ef\u4ee5",
+            "\u4e0d\u9650",
+            "\u4e0d\u6311",
+            "\u6ca1\u8981\u6c42",
+        ]
+
+        for message in messages:
+            with self.subTest(message=message):
+                result = self.parser._heuristic_parse(
+                    message=message,
+                    session_state=state,
+                )
+
+                self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+                self.assertIsNone(result["followup_question"])
+                self.assertFalse(result["needs_followup"])
+
+    def test_open_scope_with_new_budget_should_not_ask_category_first(self) -> None:
+        result = self.parser._heuristic_parse(
+            message="\u6211\u7684\u9884\u7b97\u5728800\u5143\uff0c\u968f\u4fbf\u90fd\u53ef\u4ee5",
+            session_state=SessionState(),
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertIsNone(result["followup_question"])
+        self.assertFalse(result["needs_followup"])
+
+    def test_open_scope_reply_without_context_still_asks_followup(self) -> None:
+        result = self.parser._heuristic_parse(
+            message="\u968f\u4fbf \u90fd\u53ef\u4ee5",
+            session_state=SessionState(),
+        )
+
+        self.assertEqual(result["action"], "ASK_FOLLOWUP")
+        self.assertIsNotNone(result["followup_question"])
+        self.assertTrue(result["needs_followup"])
+
+    def test_negative_open_scope_should_not_skip_budget_followup(self) -> None:
+        result = self.parser._heuristic_parse(
+            message="\u4e0d\u8981\u968f\u4fbf\u63a8\u8350\uff0c\u6211\u60f3\u770b\u9879\u94fe",
+            session_state=SessionState(),
+        )
+
+        self.assertEqual(result["action"], "ASK_FOLLOWUP")
+        self.assertIsNotNone(result["followup_question"])
+        self.assertTrue(result["needs_followup"])
+
     def test_category_only_without_open_scope_still_asks_for_budget(self) -> None:
         result = self.parser._heuristic_parse(
             message="推荐一下项链",
@@ -358,6 +409,15 @@ class OpenCatalogLlmBypassTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
                 self.assertFalse(result["needs_followup"])
+
+        result = await parser.parse(
+            message="\u968f\u4fbf \u90fd\u53ef\u4ee5",
+            session_state=SessionState(budget=800.0),
+            recent_history=[],
+        )
+
+        self.assertEqual(result["action"], "RETRIEVE_AND_RECOMMEND")
+        self.assertFalse(result["needs_followup"])
         self.assertEqual(client.calls, 0)
 
 

@@ -45,7 +45,12 @@ const starterPrompts = [
   "送妈妈一条手链，55 岁，预算 700 左右",
 ];
 
-const sessionId = `web-${crypto.randomUUID()}`;
+const SESSION_KEY = "jusheng_session_id";
+const sessionId = localStorage.getItem(SESSION_KEY) || (() => {
+  const id = `web-${crypto.randomUUID()}`;
+  localStorage.setItem(SESSION_KEY, id);
+  return id;
+})();
 const userId = `guest-${crypto.randomUUID().slice(0, 8)}`;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").trim().replace(/\/$/, "");
 
@@ -58,10 +63,12 @@ function App() {
     },
   ]);
   const [input, setInput] = useState("");
+  const [images, setImages] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [connectionState, setConnectionState] = useState("正在连接后端...");
   const [healthOk, setHealthOk] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -95,9 +102,48 @@ function App() {
     });
   }, [messages]);
 
+  function addImages(files: FileList | null) {
+    if (!files) return;
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setImages((prev) => [...prev, String(reader.result)]);
+      };
+      reader.readAsDataURL(file);
+    }
+  }
+
+  function handlePaste(event: React.ClipboardEvent) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (files.length) {
+      event.preventDefault();
+      for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setImages((prev) => [...prev, String(reader.result)]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  }
+
+  function removeImage(index: number) {
+    setImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function submitCurrentMessage() {
     const text = input.trim();
-    if (!text || isSending) {
+    const hasImages = images.length > 0;
+    if (!text && !hasImages || isSending) {
       return;
     }
 
@@ -118,11 +164,13 @@ function App() {
     startTransition(() => {
       setMessages((current) => [...current, userMessage, assistantMessage]);
     });
+    const imageUrls = [...images];
     setInput("");
+    setImages([]);
     setIsSending(true);
 
     try {
-      await sendStreamMessage(text, assistantId);
+      await sendStreamMessage(text, assistantId, imageUrls);
     } catch {
       setMessages((current) =>
         current.map((message) =>
@@ -145,7 +193,7 @@ function App() {
     await submitCurrentMessage();
   }
 
-  async function sendStreamMessage(text: string, assistantId: string) {
+  async function sendStreamMessage(text: string, assistantId: string, imageUrls: string[] = []) {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 90000);
     const response = await fetch(buildApiUrl("/api/chat/stream"), {
@@ -158,7 +206,7 @@ function App() {
         session_id: sessionId,
         user_id: userId,
         text,
-        image_urls: [],
+        image_urls: imageUrls,
         response_mode: "cards",
       }),
     });
@@ -341,21 +389,43 @@ function App() {
           </div>
 
           <form className="composer" onSubmit={handleSubmit}>
+            {images.length > 0 ? (
+              <div className="image-preview-bar">
+                {images.map((url, index) => (
+                  <div key={index} className="image-preview-item">
+                    <img src={url} alt={`上传图片 ${index + 1}`} />
+                    <button type="button" className="image-remove-btn" onClick={() => removeImage(index)}>&times;</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             <textarea
               value={input}
               onChange={(event) => setInput(event.target.value)}
+              onPaste={handlePaste}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
                   void submitCurrentMessage();
                 }
               }}
-              placeholder="直接输入需求，例如：预算 3000 左右，送女朋友，想看项链，轻奢一点"
+              placeholder="直接输入需求，例如：预算 3000 左右，送女朋友，想看项链，轻奢一点&#10;支持粘贴图片或点击下方 📷 上传"
               rows={3}
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(event) => { addImages(event.target.files); event.target.value = ""; }}
+            />
             <div className="composer-bar">
+              <button type="button" className="image-upload-btn" onClick={() => fileInputRef.current?.click()} title="上传图片">
+                📷
+              </button>
               <span>支持多轮追问、预算变更、材质偏好和送礼场景</span>
-              <button type="submit" disabled={isSending || !input.trim()}>
+              <button type="submit" disabled={isSending || (!input.trim() && !images.length)}>
                 {isSending ? "整理中..." : "发送"}
               </button>
             </div>

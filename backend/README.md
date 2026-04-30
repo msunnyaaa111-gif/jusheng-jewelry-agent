@@ -61,6 +61,9 @@ powershell -ExecutionPolicy Bypass -File .\live_chat.ps1
 - `GET /api/admin/catalog/summary`
 - `GET /api/admin/mappings`
 - `POST /api/admin/mappings/train`
+- `GET /api/admin/mappings/examples`
+- `GET /api/admin/chat-logs`
+- `GET /api/admin/diagnostics/llm`
 
 ## 导出部署用货盘
 

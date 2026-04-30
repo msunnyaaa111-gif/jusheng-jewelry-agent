@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from functools import lru_cache
 from time import perf_counter
 
 import httpx
@@ -30,11 +32,6 @@ from app.services.recommendation_service import RecommendationService
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_dialogue_service: DialogueService | None = None
-_product_repository: ProductRepository | None = None
-_mapping_repository: MappingRepository | None = None
-_chat_log_repository: ChatLogRepository | None = None
-
 
 async def _build_http_error_detail(exc: Exception) -> dict[str, object]:
     detail: dict[str, object] = {
@@ -56,7 +53,7 @@ async def _build_http_error_detail(exc: Exception) -> dict[str, object]:
             {
                 "status_code": exc.response.status_code,
                 "url": str(exc.request.url) if exc.request is not None else None,
-                "body_preview": body_preview,
+                "body_preview": _sanitize_error_body(body_preview),
             }
         )
     elif isinstance(exc, httpx.RequestError):
@@ -69,49 +66,86 @@ async def _build_http_error_detail(exc: Exception) -> dict[str, object]:
     return detail
 
 
+def _sanitize_error_body(body: str) -> str:
+    if not body:
+        return body
+
+    sensitive_keys = {"api_key", "key", "token", "secret", "authorization", "password", "apikey"}
+    redacted = "***REDACTED***"
+
+    # Try JSON first
+    try:
+        parsed = json.loads(body)
+        _redact_sensitive_json(parsed, sensitive_keys, redacted)
+        return json.dumps(parsed, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # For plain text, redact common token patterns
+    sanitized = re.sub(r'sk-[a-zA-Z0-9]{20,}', redacted, body)
+    sanitized = re.sub(r'Bearer\s+[a-zA-Z0-9\-_]{20,}', f'Bearer {redacted}', sanitized)
+    sanitized = re.sub(r'\b[a-zA-Z0-9]{32,64}\b', lambda m: redacted if _looks_like_token(m.group(0)) else m.group(0), sanitized)
+    return sanitized
+
+
+def _redact_sensitive_json(obj: object, sensitive_keys: set[str], redacted: str) -> None:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            key_lower = str(key).lower().replace("-", "").replace("_", "")
+            if any(sk in key_lower for sk in sensitive_keys):
+                obj[key] = redacted
+            elif isinstance(value, (dict, list)):
+                _redact_sensitive_json(value, sensitive_keys, redacted)
+            elif isinstance(value, str) and len(value) > 20:
+                if _looks_like_token(value):
+                    obj[key] = redacted
+    elif isinstance(obj, list):
+        for item in obj:
+            _redact_sensitive_json(item, sensitive_keys, redacted)
+
+
+def _looks_like_token(value: str) -> bool:
+    entropy_chars = len(set(value))
+    if len(value) <= 0:
+        return False
+    return entropy_chars / len(value) > 0.7
+
+
+@lru_cache(maxsize=1)
 def get_product_repository(settings: Settings = Depends(get_settings)) -> ProductRepository:
-    global _product_repository
-    if _product_repository is None:
-        _product_repository = ProductRepository(settings)
-    return _product_repository
+    return ProductRepository(settings)
 
 
+@lru_cache(maxsize=1)
 def get_mapping_repository(settings: Settings = Depends(get_settings)) -> MappingRepository:
-    global _mapping_repository
-    if _mapping_repository is None:
-        _mapping_repository = MappingRepository(settings)
-    return _mapping_repository
+    return MappingRepository(settings)
 
 
+@lru_cache(maxsize=1)
 def get_chat_log_repository(settings: Settings = Depends(get_settings)) -> ChatLogRepository:
-    global _chat_log_repository
-    if _chat_log_repository is None:
-        _chat_log_repository = ChatLogRepository(settings)
-    return _chat_log_repository
+    return ChatLogRepository(settings)
 
 
+@lru_cache(maxsize=1)
 def get_dialogue_service(
     settings: Settings = Depends(get_settings),
     product_repository: ProductRepository = Depends(get_product_repository),
     mapping_repository: MappingRepository = Depends(get_mapping_repository),
 ) -> DialogueService:
-    global _dialogue_service
-    if _dialogue_service is None:
-        longcat_client = LongCatClient(settings)
-        condition_parser = ConditionParser(longcat_client, mapping_repository=mapping_repository)
-        color_inference_service = ProductColorInferenceService(settings, longcat_client)
-        recommendation_service = RecommendationService(
-            settings,
-            product_repository,
-            color_inference_service=color_inference_service,
-        )
-        _dialogue_service = DialogueService(
-            condition_parser=condition_parser,
-            recommendation_service=recommendation_service,
-            longcat_client=longcat_client,
-            mapping_repository=mapping_repository,
-        )
-    return _dialogue_service
+    longcat_client = LongCatClient(settings)
+    condition_parser = ConditionParser(longcat_client, mapping_repository=mapping_repository)
+    color_inference_service = ProductColorInferenceService(settings, longcat_client)
+    recommendation_service = RecommendationService(
+        settings,
+        product_repository,
+        color_inference_service=color_inference_service,
+    )
+    return DialogueService(
+        condition_parser=condition_parser,
+        recommendation_service=recommendation_service,
+        longcat_client=longcat_client,
+        mapping_repository=mapping_repository,
+    )
 
 
 def _log_chat_turn(
@@ -161,10 +195,12 @@ async def chat_message(
         raise HTTPException(status_code=400, detail="text 和 image_urls 不能同时为空。")
 
     started_at = perf_counter()
+    user_text = request.text.strip()
     result = await dialogue_service.handle_message(
         session_id=request.session_id,
-        text=request.text.strip() or "用户上传了图片",
+        text=user_text,
         response_mode=request.response_mode,
+        image_urls=list(request.image_urls),
     )
     response = ChatResponse(session_id=request.session_id, **result)
     _log_chat_turn(
@@ -196,8 +232,9 @@ async def chat_stream(
         try:
             async for event in dialogue_service.stream_message(
             session_id=request.session_id,
-            text=request.text.strip() or "用户上传了图片",
+            text=request.text.strip(),
             response_mode=request.response_mode,
+            image_urls=list(request.image_urls),
         ):
                 if event["type"] == "done" and event.get("response"):
                     _log_chat_turn(

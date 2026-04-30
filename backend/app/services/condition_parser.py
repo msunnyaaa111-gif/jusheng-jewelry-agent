@@ -1685,10 +1685,10 @@ class ConditionParser:
             return "这次您是自己佩戴，还是送女友、妈妈、闺蜜或男友呢？我可以按人群帮您再细分。"
         if gift_target is None:
             return "这次您是自己佩戴，还是送女友、妈妈或闺蜜呢？"
-        if not color:
-            return "颜色上您更偏蓝色、绿色、红色这类明显色感，还是想要百搭一点的中性色呢？"
         if not material:
             return "材质上您会更偏黄金、K金、珍珠、和田玉还是红宝石这类方向呢？"
+        if not color:
+            return "颜色上您更偏蓝色、绿色、红色这类明显色感，还是想要百搭一点的中性色呢？"
         if not style and not luxury:
             return "风格上您更想要显贵一点、日常百搭一点，还是偏温柔精致一点呢？"
         return "您更喜欢简约、温柔、显贵还是通勤百搭一点的风格呢？"

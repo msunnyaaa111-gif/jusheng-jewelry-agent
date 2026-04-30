@@ -93,6 +93,21 @@ ZODIAC_RULES = {
 }
 
 
+SCORE_CATEGORY_MATCH = 48
+SCORE_GIFT_TARGET_MATCH = 38
+SCORE_LUXURY_MATCH = 35
+SCORE_MATERIAL_MATCH = 42
+SCORE_STYLE_MATCH = 20
+SCORE_DEFAULT_WEIGHT = 8
+SCORE_DISCOUNT_WEIGHT = 8
+SCORE_IMAGE_FEATURE_MATCH = 16
+SCORE_COLOR_MATCH = 24
+SCORE_SYMBOL_PREFERENCE_MATCH = 10
+SCORE_SYMBOL_STYLE_MATCH = 6
+SCORE_SYMBOL_STONE_MATCH = 6
+SCORE_PREMIUM_UPGRADE = 20
+
+
 class RecommendationService:
     def __init__(
         self,
@@ -125,6 +140,7 @@ class RecommendationService:
             "constellation": state.constellation,
             "zodiac": state.zodiac,
             "excluded_preferences": state.excluded_preferences,
+            "image_features": state.image_features,
             "premium_upgrade_intent": state.premium_upgrade_intent,
         }
         return hashlib.sha256(
@@ -182,12 +198,12 @@ class RecommendationService:
         has_luxury = bool(state.luxury_intent or state.style_preferences)
 
         return {
-            "category": 48 if has_category else 10,
-            "gift_target": 38 if has_gift_target else 8,
-            "luxury": 35 if has_luxury else 8,
-            "style": 20 if has_luxury else 10,
-            "material": 42 if has_material else 8,
-            "discount": 8,
+            "category": SCORE_CATEGORY_MATCH if has_category else SCORE_DEFAULT_WEIGHT + 2,
+            "gift_target": SCORE_GIFT_TARGET_MATCH if has_gift_target else SCORE_DEFAULT_WEIGHT,
+            "luxury": SCORE_LUXURY_MATCH if has_luxury else SCORE_DEFAULT_WEIGHT,
+            "style": SCORE_STYLE_MATCH if has_luxury else SCORE_DEFAULT_WEIGHT + 2,
+            "material": SCORE_MATERIAL_MATCH if has_material else SCORE_DEFAULT_WEIGHT,
+            "discount": SCORE_DISCOUNT_WEIGHT,
         }
 
     async def _apply_priority_prefilters(
@@ -479,6 +495,9 @@ class RecommendationService:
         ):
             score += 6
 
+        if state.image_features and self._matches_text_preferences(product, state.image_features):
+            score += 16
+
         if product.get("discount") is not None:
             score += profile["discount"]
 
@@ -549,18 +568,18 @@ class RecommendationService:
 
     def _matches_primary_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
         color_aliases = {
-            "钃濊壊": ["钃?", "钃濊壊", "娴疯摑", "澶╄摑", "瀹濊摑", "钃濊皟", "钃濆疂", "钃濇按"],
-            "缁胯壊": ["缁?", "缁胯壊", "闈掔豢", "缈犵豢", "澧ㄧ豢"],
-            "绾㈣壊": ["绾?", "绾㈣壊", "閰掔孩", "鐜孩", "鏈辩孩"],
-            "绮夎壊": ["绮?", "绮夎壊", "妯辫姳绮?", "灏戝コ绮?"],
-            "绱壊": ["绱?", "绱壊", "钖拌。鑽夌传"],
-            "鐧借壊": ["鐧?", "鐧借壊", "濂剁櫧", "绫崇櫧"],
-            "榛戣壊": ["榛?", "榛戣壊", "鏇滈粦"],
-            "閲戣壊": ["閲?", "閲戣壊", "棣欐閲?"],
-            "閾惰壊": ["閾?", "閾惰壊"],
-            "榛勮壊": ["榛?", "榛勮壊", "黄色", "鹅黄", "奶黄"],
-            "姗欒壊": ["姗?", "姗欒壊", "橘色", "橙色", "橙黄"],
-            "妫曡壊": ["妫?", "妫曡壊", "咖色", "咖啡色", "棕色"],
+            "蓝色": ["蓝", "蓝色", "海蓝", "天蓝", "宝蓝", "蓝调", "蓝宝", "蓝水"],
+            "绿色": ["绿", "绿色", "青绿", "翠绿", "墨绿"],
+            "红色": ["红", "红色", "酒红", "玫红", "朱红"],
+            "粉色": ["粉", "粉色", "樱花粉", "少女粉"],
+            "紫色": ["紫", "紫色", "薰衣草紫"],
+            "白色": ["白", "白色", "奶白", "米白"],
+            "黑色": ["黑", "黑色", "曜黑"],
+            "金色": ["金", "金色", "香槟金"],
+            "银色": ["银", "银色"],
+            "黄色": ["黄", "黄色", "鹅黄", "奶黄"],
+            "橙色": ["橙", "橙色", "橘色", "橙黄"],
+            "棕色": ["棕", "棕色", "咖色", "咖啡色"],
         }
         inferred_colors = [str(item).strip() for item in (product.get("_inferred_colors") or []) if str(item).strip()]
         if inferred_colors:
@@ -583,41 +602,6 @@ class RecommendationService:
         for color in colors:
             variants = color_aliases.get(color, [color])
             if any(variant in text_haystack for variant in variants):
-                return True
-        return False
-
-    def _matches_color_preferences(self, product: dict[str, Any], colors: list[str]) -> bool:
-        text_haystack = " ".join(
-            [
-                product.get("product_name") or "",
-                product.get("main_material") or "",
-                product.get("stone_material") or "",
-                product.get("system_attributes") or "",
-                product.get("selling_points") or "",
-            ]
-        )
-        color_aliases = {
-            "蓝色": ["蓝", "蓝色", "海蓝", "天蓝", "宝蓝", "蓝调", "蓝宝", "蓝水"],
-            "绿色": ["绿", "绿色", "青绿", "翠绿", "墨绿"],
-            "红色": ["红", "红色", "酒红", "玫红", "朱红"],
-            "粉色": ["粉", "粉色", "樱花粉", "少女粉"],
-            "紫色": ["紫", "紫色", "薰衣草紫"],
-            "白色": ["白", "白色", "奶白", "米白"],
-            "黑色": ["黑", "黑色", "曜黑"],
-            "金色": ["金", "金色", "香槟金"],
-            "银色": ["银", "银色"],
-        }
-        for color in colors:
-            variants = color_aliases.get(color, [color])
-            if any(variant in text_haystack for variant in variants):
-                return True
-        inferred_colors = [str(item).strip() for item in (product.get("_inferred_colors") or []) if str(item).strip()]
-        if not inferred_colors:
-            return False
-        primary_color = inferred_colors[0]
-        for color in colors:
-            variants = color_aliases.get(color, [color])
-            if primary_color in variants or primary_color == color:
                 return True
         return False
 

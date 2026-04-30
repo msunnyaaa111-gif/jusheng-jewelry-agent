@@ -153,6 +153,32 @@ Rules:
 - If some field is missing, write conservatively and stay grounded in the provided data.
 """
 
+IMAGE_ANALYSIS_SYSTEM_PROMPT = """
+你是钜盛珠宝 AI 导购的图片分析引擎。
+从用户上传的图片中提取可用于珠宝搭配和商品推荐的辅助信息。
+
+规则：
+1. 只能输出珠宝搭配建议相关信息。
+2. 不得做身份识别，不得判断种族、年龄、健康、职业、收入等敏感属性。
+3. 如果图片不清晰、主体不明确或无法分析，必须返回 unusable。
+4. 如果图片是自拍，输出轮廓倾向、整体风格、适合材质、适合系统属性等。
+5. 如果图片是参考款式图，输出材质偏好、设计偏好、气质关键词等。
+
+Return JSON only:
+{
+  "image_type": "selfie" | "reference_jewelry" | "unknown",
+  "usability": "usable" | "unusable" | "uncertain",
+  "extracted_features": {
+    "style_preferences": ["温柔", "精致"],
+    "main_material": ["K金"],
+    "stone_material": ["锆石"],
+    "system_attributes": ["通勤", "高级感"],
+    "color_preferences": ["金色"]
+  },
+  "backend_mapping_hints": ["可提高显贵款权重", "可优先检索K金方向"]
+}
+"""
+
 
 class DialogueService:
     def __init__(
@@ -192,9 +218,46 @@ class DialogueService:
     def _normalize_response_mode(self, response_mode: str | None) -> str:
         return "text" if str(response_mode or "").strip().lower() == "text" else "cards"
 
-    async def handle_message(self, *, session_id: str, text: str, response_mode: str = "cards") -> dict[str, Any]:
+    async def _analyze_images(self, image_urls: list[str], text: str, state: SessionState) -> list[str] | None:
+        vision_model = self.longcat_client.settings.effective_vision_model
+        if not LongCatClient.supports_image_inputs(vision_model):
+            return None
+
+        valid_urls = [url for url in image_urls if url and str(url).strip()]
+        if not valid_urls:
+            return None
+
+        try:
+            raw = await self.longcat_client.chat_completion(
+                system_prompt=IMAGE_ANALYSIS_SYSTEM_PROMPT,
+                user_payload={"message": text or "请分析这张图片的珠宝搭配特征"},
+                image_inputs=valid_urls,
+                temperature=0.1,
+                max_tokens=600,
+                model=vision_model,
+            )
+            result = self.longcat_client.extract_json_block(raw)
+        except Exception:
+            logger.exception("Image analysis failed; continuing without image features")
+            return None
+
+        if result.get("usability") != "usable":
+            return None
+
+        features = result.get("extracted_features") or {}
+        mapping_hints = result.get("backend_mapping_hints") or []
+        merged: list[str] = list(mapping_hints)
+        for key in ("style_preferences", "main_material", "stone_material", "system_attributes", "color_preferences"):
+            values = features.get(key) or []
+            for value in values:
+                text_value = str(value).strip()
+                if text_value and text_value not in merged:
+                    merged.append(text_value)
+        return merged or None
+
+    async def handle_message(self, *, session_id: str, text: str, response_mode: str = "cards", image_urls: list[str] | None = None) -> dict[str, Any]:
         response_mode = self._normalize_response_mode(response_mode)
-        turn = await self._prepare_turn(session_id=session_id, text=text)
+        turn = await self._prepare_turn(session_id=session_id, text=text, image_urls=image_urls)
         products = turn["recommended_products"]
         reply_source = "cards" if response_mode == "cards" else None
         if turn["action"] in {"RETRIEVE_AND_RECOMMEND", "RERANK_AND_RECOMMEND"} and products:
@@ -223,10 +286,10 @@ class DialogueService:
             state=turn["state"],
         )
 
-    async def stream_message(self, *, session_id: str, text: str, response_mode: str = "cards"):
+    async def stream_message(self, *, session_id: str, text: str, response_mode: str = "cards", image_urls: list[str] | None = None):
         yield {"type": "status", "text": "正在理解您的需求，马上开始整理回复..."}
         response_mode = self._normalize_response_mode(response_mode)
-        turn = await self._prepare_turn(session_id=session_id, text=text)
+        turn = await self._prepare_turn(session_id=session_id, text=text, image_urls=image_urls)
         action = turn["action"]
         state = turn["state"]
         parsed = turn["parsed"]
@@ -355,7 +418,7 @@ class DialogueService:
             chunks[-1] = chunks[-1].rstrip("\n")
         return chunks
 
-    async def _prepare_turn(self, *, session_id: str, text: str) -> dict[str, Any]:
+    async def _prepare_turn(self, *, session_id: str, text: str, image_urls: list[str] | None = None) -> dict[str, Any]:
         state = self.get_session_state(session_id)
         history = self.histories.get(session_id, [])
         explicit_conditions = self.condition_parser.extract_explicit_conditions(text)
@@ -370,11 +433,24 @@ class DialogueService:
 
         self._apply_pending_followup(state, text, explicit_conditions)
 
+        image_task = None
+        if image_urls and self.longcat_client.settings.llm_enabled:
+            image_task = asyncio.create_task(self._analyze_images(image_urls, text, state))
+
         parsed = await self.condition_parser.parse(
             message=text,
             session_state=state,
             recent_history=history,
         )
+
+        if image_task is not None:
+            image_features = await image_task
+            if image_features:
+                if not state.image_features:
+                    state.image_features = []
+                for feature in image_features:
+                    if feature not in state.image_features:
+                        state.image_features.append(feature)
         self._append_history(session_id, "user", text)
         merged_conditions = self._combine_conditions(
             explicit_conditions,
@@ -1210,27 +1286,6 @@ class DialogueService:
             parts.append(f"，当前条件下先找到 {match_count} 款更匹配的选项")
 
         closing = "这一轮我优先按当前条件做了严格筛选，下面这几款会更贴近您现在的需求。"
-        return "".join(parts) + "，" + closing
-
-        parts = []
-        if state.budget is not None:
-            parts.append(f"这次我先按您 {self._format_price(state.budget)} 左右的预算")
-        else:
-            parts.append("我先按您刚刚补充的条件")
-
-        if state.gift_target == "自戴":
-            parts.append("和日常自戴的方向")
-        elif state.gift_target == "妈妈":
-            parts.append("和给妈妈挑礼物的方向")
-        elif state.gift_target:
-            parts.append(f"和{state.gift_target}场景")
-
-        if state.category:
-            parts.append(f"重新筛了 {len(products[:3])} 款更贴近{state.category[0]}需求的商品")
-        else:
-            parts.append(f"重新筛了 {len(products[:3])} 款更贴近当前需求的商品")
-
-        closing = "这轮我优先按批发裸价做了筛选，下面这几款会更贴近您现在的需求。"
         return "".join(parts) + "，" + closing
 
     def _render_product_block(

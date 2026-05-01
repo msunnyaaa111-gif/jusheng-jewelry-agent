@@ -432,6 +432,11 @@ class DialogueService:
             state = self._reset_session_state(session_id, hard=reset_mode == "hard")
 
         self._apply_pending_followup(state, text, explicit_conditions)
+        relax_structured_gift_target = self._consume_structured_target_exhaustion_followup(
+            state,
+            text,
+            explicit_conditions,
+        )
 
         image_task = None
         if image_urls and self.longcat_client.settings.llm_enabled:
@@ -465,6 +470,10 @@ class DialogueService:
         retrieval_hash = self.recommendation_service.build_retrieval_hash(state)
         should_refresh = parsed.get("should_refresh_retrieval", False) or state.last_retrieval_hash != retrieval_hash
         action = parsed.get("action", "ASK_FOLLOWUP")
+        if relax_structured_gift_target:
+            action = "RERANK_AND_RECOMMEND"
+            parsed["action"] = action
+            should_refresh = False
         if should_refresh:
             state.seen_recommended_codes = []
 
@@ -476,6 +485,7 @@ class DialogueService:
                 recommended_products = await self.recommendation_service.search(
                     state,
                     exclude_product_codes=state.seen_recommended_codes,
+                    relax_structured_gift_target=relax_structured_gift_target,
                 )
             elif should_refresh or not state.last_recommended_codes:
                 recommended_products = await self.recommendation_service.search(state)
@@ -490,6 +500,9 @@ class DialogueService:
                         *(parsed.get("notes_for_backend") or []),
                         "no_more_fresh_recommendations",
                     ]
+                    if self.recommendation_service.has_structured_gift_target(state):
+                        state.pending_followup_type = "structured_target_exhausted"
+                        parsed["notes_for_backend"].append("structured_target_exhausted")
                 alternative_category_followup = self._build_empty_result_alternative_followup(state)
                 if action != "EXPLAIN_NO_RESULT" and alternative_category_followup:
                     action = "ASK_FOLLOWUP"
@@ -961,6 +974,90 @@ class DialogueService:
             state.pending_followup_options = []
             state.premium_upgrade_intent = False
 
+    def _consume_structured_target_exhaustion_followup(
+        self,
+        state: SessionState,
+        text: str,
+        explicit_conditions: dict[str, Any],
+    ) -> bool:
+        if state.pending_followup_type != "structured_target_exhausted":
+            return False
+        if not self._is_same_budget_continuation_request(text):
+            if self._has_explicit_retrieval_condition(explicit_conditions):
+                state.pending_followup_type = None
+                state.pending_followup_options = []
+            return False
+
+        state.pending_followup_type = None
+        state.pending_followup_options = []
+        return True
+
+    def _has_explicit_retrieval_condition(self, conditions: dict[str, Any]) -> bool:
+        return any(
+            [
+                conditions.get("budget") is not None,
+                conditions.get("budget_unrestricted") is True,
+                conditions.get("category"),
+                conditions.get("excluded_categories"),
+                conditions.get("main_material"),
+                conditions.get("stone_material"),
+                conditions.get("excluded_main_material"),
+                conditions.get("excluded_stone_material"),
+                conditions.get("color_preferences"),
+                conditions.get("feature_preferences"),
+                conditions.get("excluded_feature_preferences"),
+                conditions.get("gift_target") is not None,
+                conditions.get("style_preferences"),
+                conditions.get("excluded_style_preferences"),
+                conditions.get("luxury_intent"),
+                conditions.get("constellation") is not None,
+                conditions.get("zodiac") is not None,
+                conditions.get("birthday") is not None,
+                conditions.get("excluded_preferences"),
+            ]
+        )
+
+    def _is_same_budget_continuation_request(self, text: str) -> bool:
+        normalized = str(text or "").strip().lower()
+        if not normalized:
+            return False
+        compact = re.sub(r"[\s,\uFF0C\u3002.!?\uFF01\uFF1F\u3001~\uFF5E]+", "", normalized)
+        same_budget_markers = (
+            "依旧这个预算",
+            "还是这个预算",
+            "仍然这个预算",
+            "继续这个预算",
+            "就这个预算",
+            "按这个预算",
+            "同预算",
+            "预算不变",
+            "价格不变",
+            "价位不变",
+            "还是原预算",
+            "预算还是",
+        )
+        if any(marker in compact for marker in same_budget_markers):
+            return True
+        return self._is_more_options_continuation(compact)
+
+    def _is_more_options_continuation(self, compact_text: str) -> bool:
+        if len(compact_text) > 16:
+            return False
+        return any(
+            marker in compact_text
+            for marker in (
+                "继续",
+                "继续看",
+                "继续找",
+                "再看看",
+                "再来",
+                "还有吗",
+                "还有没有",
+                "依旧",
+                "还是",
+            )
+        )
+
     def _apply_alternative_category_followup(self, state: SessionState, text: str) -> None:
         normalized = text.strip().lower()
         if self._is_affirmative(normalized):
@@ -1102,6 +1199,11 @@ class DialogueService:
         if action == "EXPLAIN_NO_RESULT":
             notes = parsed.get("notes_for_backend") or []
             if "no_more_fresh_recommendations" in notes:
+                if "structured_target_exhausted" in notes:
+                    return (
+                        "我刚按您刚才这组条件继续往下筛了一轮，当前预算和品类下带明确人群标签的款式基本已经看完了。\n\n"
+                        "如果您想依旧按这个预算继续看，我可以放宽到未标注人群但风格、材质和价位接近的备选款，再帮您补一轮。"
+                    )
                 return (
                     "我刚按您刚才这组条件继续往下筛了一轮，这一轮能补充的新款已经比较少了，所以不是系统一直重复同一批，"
                     "而是当前条件下更匹配的款式基本已经看完了。\n\n"
@@ -1181,6 +1283,11 @@ class DialogueService:
         if action == "EXPLAIN_NO_RESULT":
             notes = parsed.get("notes_for_backend") or []
             if "no_more_fresh_recommendations" in notes:
+                if "structured_target_exhausted" in notes:
+                    return (
+                        "我刚按您刚才这组条件继续往下筛了一轮，当前预算和品类下带明确人群标签的款式基本已经看完了。"
+                        "如果您想依旧按这个预算继续看，我可以放宽到未标注人群但风格、材质和价位接近的备选款。"
+                    )
                 return (
                     "我刚按您刚才这组条件继续往下筛了一轮，这一轮能补充的新款已经比较少了，所以不是系统一直重复同一批，"
                     "而是当前条件下更匹配的款式基本已经看完了。"

@@ -152,6 +152,7 @@ class RecommendationService:
         state: SessionState,
         limit: int = 3,
         exclude_product_codes: list[str] | None = None,
+        relax_structured_gift_target: bool = False,
     ) -> list[dict[str, Any]]:
         self.product_repository.load_catalog()
         products = self.product_repository.products
@@ -171,7 +172,11 @@ class RecommendationService:
                 if product.get("product_code") not in excluded_codes
             ]
 
-        candidates = await self._apply_priority_prefilters(candidates, state)
+        candidates = await self._apply_priority_prefilters(
+            candidates,
+            state,
+            relax_structured_gift_target=relax_structured_gift_target,
+        )
         if not candidates:
             return []
 
@@ -210,6 +215,8 @@ class RecommendationService:
         self,
         candidates: list[dict[str, Any]],
         state: SessionState,
+        *,
+        relax_structured_gift_target: bool = False,
     ) -> list[dict[str, Any]]:
         filtered = list(candidates)
 
@@ -229,17 +236,16 @@ class RecommendationService:
                 for product in filtered
                 if structured_target in (product.get("suitable_people") or "")
             ]
-            if by_people:
-                prioritized_codes = {
-                    product.get("product_code")
-                    for product in by_people
-                }
+            if relax_structured_gift_target:
+                prioritized_codes = {product.get("product_code") for product in by_people}
                 remaining = [
                     product
                     for product in filtered
                     if product.get("product_code") not in prioritized_codes
                 ]
                 filtered = by_people + remaining
+            else:
+                filtered = by_people
 
         if self._has_material_priority(state):
             by_material = [
@@ -416,6 +422,9 @@ class RecommendationService:
             )
         )
         return candidates[:limit]
+
+    def has_structured_gift_target(self, state: SessionState) -> bool:
+        return self._structured_gift_target(state) is not None
 
     def _budget_distance(self, product: dict[str, Any], budget: float | None) -> float:
         price = product.get("wholesale_price")

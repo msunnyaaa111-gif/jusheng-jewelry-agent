@@ -364,6 +364,22 @@ class ConditionParserGiftTargetTests(unittest.TestCase):
         self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
         self.assertFalse(result["needs_followup"])
 
+    def test_reject_current_cards_should_rerank_without_refreshing_conditions(self) -> None:
+        state = SessionState(
+            budget_unrestricted=True,
+            last_recommended_codes=["A001", "A002", "A003"],
+            seen_recommended_codes=["A001", "A002", "A003"],
+        )
+
+        result = self.parser._heuristic_parse(
+            message="\u6709\u5176\u4ed6\u7684\u63a8\u8350\u5417 \u90fd\u53ef\u4ee5 \u4f46\u662f\u6211\u4e0d\u8981\u8fd9\u4e09\u6b3e",
+            session_state=state,
+        )
+
+        self.assertEqual(result["action"], "RERANK_AND_RECOMMEND")
+        self.assertFalse(result["should_refresh_retrieval"])
+        self.assertEqual(result["conditions"]["excluded_preferences"], [])
+
     def test_detail_request_should_not_rerank_existing_recommendations(self) -> None:
         state = SessionState(
             budget=300.0,

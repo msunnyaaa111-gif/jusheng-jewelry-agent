@@ -45,6 +45,15 @@
 ### 条件变更必须重算
 用户修改预算/款式/材质/送礼对象/风格/星座生肖后，必须重新检索和排序，禁止复用旧推荐结果。
 
+### 换一批必须排除已展示商品
+用户在已有推荐结果后说“有其他推荐吗”“不要这三款”“换一批”“看看别的”等，必须走 `RERANK_AND_RECOMMEND`，并用 `seen_recommended_codes` / `last_recommended_codes` 排除已展示商品。不要把“这三款/这些/这几个”解析成普通 `excluded_preferences`，否则会触发普通刷新并可能重复返回旧商品。
+
+### 结构化适合人群优先与降级
+用户明确表达送男友/男朋友等需求时，`gift_target` 会归一为 `男款`。推荐层首轮和正常换一批必须优先只返回 `suitable_people` 包含 `男款` 的商品；如果当前预算、品类下男款已全部展示完，先进入 `EXPLAIN_NO_RESULT` 并标记 `structured_target_exhausted`。只有用户随后明确表示“依旧这个预算”“还是这个预算”“预算不变”等继续同预算诉求时，下一轮 `RERANK_AND_RECOMMEND` 才允许通过 `relax_structured_gift_target=True` 放宽到未标注人群但价位/品类接近的备选款。
+
+### 流式响应不能被日志失败打断
+`/api/chat/stream` 的 SSE 响应必须优先保证用户能收到真实对话结果。聊天日志写入失败只能记录后端异常日志，不能触发 `stream_fallback`，也不能把已生成的正常回复替换成“商品卡片没有完整返回”。
+
 ## 环境变量
 
 | 变量 | 说明 | 必需 |
@@ -97,6 +106,15 @@
 无请求频率控制，对话接口可被滥用导致 LLM 调用成本失控。需确定限流策略后引入 slowapi 或中间件。
 
 ## 最近修复（2026-05-01）
+
+### Rerank 排重修复
+修复用户先让系统随便推荐，再说“有其他的推荐吗，都可以，但是我不要这三款”时仍返回原三款的问题。`condition_parser.py` 现在识别对当前卡片组的指代拒绝，强制 `RERANK_AND_RECOMMEND` 且不刷新条件；`dialogue_service.py` 继续用 `seen_recommended_codes` 排除上一批商品。新增 parser 和 dialogue service 回归测试覆盖该话术。
+
+### 男款适合人群降级修复
+修复“送男朋友的手串，预算 400 元”多轮换一批时把 `suitable_people` 为空的商品混入男款结果的问题。`recommendation_service.py` 默认严格按结构化人群标签过滤；`dialogue_service.py` 在男款耗尽后记录 `structured_target_exhausted`，用户再明确坚持同预算时才放宽人群标签补备选。新增 recommendation 和 dialogue service 回归测试覆盖首轮男款、男款耗尽、同预算降级三段链路。
+
+### Stream 日志失败兜底误触发修复
+修复 `/api/chat/stream` 在回复已正常生成后，因为聊天日志写入失败被外层 `except` 捕获，导致前端收到“商品卡片没有完整返回”的问题。`routes.py` 新增 `_safe_log_chat_turn`，将日志失败隔离为后端日志；新增 route 回归测试模拟 `append_log` 抛 `OSError`，确认 SSE `done` 不会被替换成 `stream_fallback`。
 
 ### P0 全修复 | P1 死代码 | P2-7/8/9/10/12 重构与前端
 P0（颜色乱码、图片链路、敏感信息）+ P1（死代码删除）+ P2（lru_cache 单例、SCORE_* 常量、追问优先级、前端 localStorage session、前端图片上传）。剩余 2 项需决策后实施。

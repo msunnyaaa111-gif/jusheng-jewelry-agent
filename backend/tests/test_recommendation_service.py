@@ -133,6 +133,150 @@ class RecommendationServiceStrictMatchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, [])
 
+    async def test_structured_gift_target_filters_out_non_matching_people(self) -> None:
+        repository = FakeProductRepository(
+            [
+                {
+                    "product_code": "M-001",
+                    "product_name": "男款沉香手串",
+                    "system_category": "手链",
+                    "wholesale_price": 390.0,
+                    "group_price": 520.0,
+                    "product_image_url": "https://example.com/m-001.jpg",
+                    "suitable_people": "男款",
+                    "main_material": "沉香",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+                {
+                    "product_code": "N-001",
+                    "product_name": "中性水晶手串",
+                    "system_category": "手链",
+                    "wholesale_price": 400.0,
+                    "group_price": 560.0,
+                    "product_image_url": "https://example.com/n-001.jpg",
+                    "suitable_people": "",
+                    "main_material": "水晶",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+                {
+                    "product_code": "M-002",
+                    "product_name": "男款玛瑙手绳",
+                    "system_category": "手链",
+                    "wholesale_price": 430.0,
+                    "group_price": 590.0,
+                    "product_image_url": "https://example.com/m-002.jpg",
+                    "suitable_people": "男款",
+                    "main_material": "玛瑙",
+                    "stone_material": "",
+                    "system_attributes": "国风",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+            ]
+        )
+        service = RecommendationService(self.settings, repository)
+
+        results = await service.search(
+            SessionState(budget=400.0, category=["手链"], gift_target="男款"),
+            limit=3,
+        )
+
+        self.assertEqual([item["product_code"] for item in results], ["M-001", "M-002"])
+        self.assertTrue(all(item["suitable_people"] == "男款" for item in results))
+
+    async def test_structured_gift_target_returns_empty_when_remaining_items_do_not_match(self) -> None:
+        repository = FakeProductRepository(
+            [
+                {
+                    "product_code": "M-001",
+                    "product_name": "男款沉香手串",
+                    "system_category": "手链",
+                    "wholesale_price": 390.0,
+                    "group_price": 520.0,
+                    "product_image_url": "https://example.com/m-001.jpg",
+                    "suitable_people": "男款",
+                    "main_material": "沉香",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+                {
+                    "product_code": "N-001",
+                    "product_name": "中性水晶手串",
+                    "system_category": "手链",
+                    "wholesale_price": 400.0,
+                    "group_price": 560.0,
+                    "product_image_url": "https://example.com/n-001.jpg",
+                    "suitable_people": "",
+                    "main_material": "水晶",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+            ]
+        )
+        service = RecommendationService(self.settings, repository)
+
+        results = await service.search(
+            SessionState(budget=400.0, category=["手链"], gift_target="男款"),
+            limit=3,
+            exclude_product_codes=["M-001"],
+        )
+
+        self.assertEqual(results, [])
+
+    async def test_structured_gift_target_can_be_relaxed_after_exhaustion(self) -> None:
+        repository = FakeProductRepository(
+            [
+                {
+                    "product_code": "M-001",
+                    "product_name": "男款沉香手串",
+                    "system_category": "手链",
+                    "wholesale_price": 390.0,
+                    "group_price": 520.0,
+                    "product_image_url": "https://example.com/m-001.jpg",
+                    "suitable_people": "男款",
+                    "main_material": "沉香",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+                {
+                    "product_code": "N-001",
+                    "product_name": "中性水晶手串",
+                    "system_category": "手链",
+                    "wholesale_price": 400.0,
+                    "group_price": 560.0,
+                    "product_image_url": "https://example.com/n-001.jpg",
+                    "suitable_people": "",
+                    "main_material": "水晶",
+                    "stone_material": "",
+                    "system_attributes": "通勤日常",
+                    "selling_points": "",
+                    "luxury_flag": "",
+                },
+            ]
+        )
+        service = RecommendationService(self.settings, repository)
+
+        results = await service.search(
+            SessionState(budget=400.0, category=["手链"], gift_target="男款"),
+            limit=3,
+            exclude_product_codes=["M-001"],
+            relax_structured_gift_target=True,
+        )
+
+        self.assertEqual([item["product_code"] for item in results], ["N-001"])
+
     async def test_uses_inferred_image_colors_when_text_fields_have_no_color(self) -> None:
         repository = FakeProductRepository(
             [

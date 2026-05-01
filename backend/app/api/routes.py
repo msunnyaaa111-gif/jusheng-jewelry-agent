@@ -188,6 +188,28 @@ def _log_chat_turn(
     )
 
 
+def _safe_log_chat_turn(
+    *,
+    chat_log_repository: ChatLogRepository,
+    request: ChatRequest,
+    response_payload: dict[str, object],
+    duration_ms: int | None,
+    status: str = "ok",
+    error_message: str | None = None,
+) -> None:
+    try:
+        _log_chat_turn(
+            chat_log_repository=chat_log_repository,
+            request=request,
+            response_payload=response_payload,
+            duration_ms=duration_ms,
+            status=status,
+            error_message=error_message,
+        )
+    except Exception:
+        logger.exception("Chat log write failed", extra={"session_id": request.session_id})
+
+
 @router.get("/health", tags=["System"], summary="健康检查")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, str | bool]:
     return {
@@ -249,13 +271,13 @@ async def chat_stream(
     async def event_generator():
         try:
             async for event in dialogue_service.stream_message(
-            session_id=request.session_id,
-            text=request.text.strip(),
-            response_mode=request.response_mode,
-            image_urls=list(request.image_urls),
-        ):
+                session_id=request.session_id,
+                text=request.text.strip(),
+                response_mode=request.response_mode,
+                image_urls=list(request.image_urls),
+            ):
                 if event["type"] == "done" and event.get("response"):
-                    _log_chat_turn(
+                    _safe_log_chat_turn(
                         chat_log_repository=chat_log_repository,
                         request=request,
                         response_payload=jsonable_encoder(event["response"]),
@@ -274,7 +296,7 @@ async def chat_stream(
                 recommended_products=[],
                 session_state=dialogue_service.get_session_state(request.session_id),
             )
-            _log_chat_turn(
+            _safe_log_chat_turn(
                 chat_log_repository=chat_log_repository,
                 request=request,
                 response_payload=jsonable_encoder(fallback_response),

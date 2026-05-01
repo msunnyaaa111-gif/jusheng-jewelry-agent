@@ -65,6 +65,16 @@ powershell -ExecutionPolicy Bypass -File .\live_chat.ps1
 - `GET /api/admin/chat-logs`
 - `GET /api/admin/diagnostics/llm`
 
+## 多轮推荐行为
+
+用户在已有商品卡片后要求“有其他推荐吗”“不要这三款”“换一批”“看看别的”时，后端会进入 `RERANK_AND_RECOMMEND`，并排除 `seen_recommended_codes` / `last_recommended_codes` 中已经展示过的商品，避免把同一组三款再次返回。
+
+当用户明确送男友/男朋友等结构化人群需求时，推荐层会优先只返回 `suitable_people` 包含 `男款` 的商品。若当前预算和品类下男款已经展示完，后端先返回无更多匹配说明；用户随后明确表示“依旧这个预算”“还是这个预算”“预算不变”等继续同预算诉求时，下一轮才会放宽到未标注人群但价位和品类接近的备选款。
+
+## 流式响应稳定性
+
+`POST /api/chat/stream` 使用 SSE 返回 `status` / `delta` / `done`。聊天日志写入失败不会中断用户响应，也不会把正常 `done` 替换成 `stream_fallback`；日志异常只记录在后端日志中。
+
 ## 导出部署用货盘
 
 如果后面要部署到 Railway，建议先把超大的 Excel 货盘导出成 `JSON + catalog_media`：

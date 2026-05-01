@@ -497,6 +497,9 @@ class ConditionParser:
         text = self._normalize_text(message)
         conditions = self.extract_explicit_conditions(text)
         browse_refusal = self._is_browse_refusal(text)
+        current_recommendation_rejection = self._is_current_recommendation_rejection(text, session_state)
+        if current_recommendation_rejection:
+            conditions["excluded_preferences"] = []
 
         meaningful = any(
             [
@@ -558,6 +561,10 @@ class ConditionParser:
             action = "ASK_FOLLOWUP"
             intent = "decline_recommendation"
             needs_followup = True
+        elif current_recommendation_rejection:
+            action = "RERANK_AND_RECOMMEND"
+            intent = "ask_more_options"
+            needs_followup = False
         elif self._should_rerank_from_context(
             text=text,
             session_state=session_state,
@@ -722,6 +729,39 @@ class ConditionParser:
             return True
 
         return False
+
+    def _is_current_recommendation_rejection(self, text: str, session_state: SessionState) -> bool:
+        if not session_state.last_recommended_codes:
+            return False
+
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+
+        rejection_markers = (
+            "\u4e0d\u8981",
+            "\u4e0d\u60f3\u8981",
+            "\u4e0d\u60f3\u770b",
+            "\u4e0d\u559c\u6b22",
+            "\u4e0d\u8003\u8651",
+            "\u522b\u8981",
+            "\u522b\u770b",
+            "\u522b\u63a8",
+            "\u6362",
+            "\u5176\u4ed6",
+            "\u522b\u7684",
+        )
+        if not any(marker in normalized for marker in rejection_markers):
+            return False
+
+        current_result_patterns = (
+            r"\u8fd9\s*(?:\u4e09|3)?\s*(?:\u6b3e|\u4e2a|\u4ef6)",
+            r"\u8fd9\u51e0\s*(?:\u6b3e|\u4e2a|\u4ef6)",
+            r"\u8fd9\u4e9b\s*(?:\u6b3e|\u4e2a|\u4ef6)?",
+            r"\u521a\u624d\s*(?:\u8fd9|\u90a3)?\s*(?:\u4e09|3|\u51e0)?\s*(?:\u6b3e|\u4e2a|\u4ef6)?",
+            r"\u4e0a\u9762\s*(?:\u8fd9|\u90a3)?\s*(?:\u4e09|3|\u51e0)?\s*(?:\u6b3e|\u4e2a|\u4ef6)?",
+        )
+        return any(re.search(pattern, normalized) for pattern in current_result_patterns)
 
     def _should_rerank_from_context(
         self,
